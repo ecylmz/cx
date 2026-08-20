@@ -48,7 +48,7 @@ func TestVerifySHA256(t *testing.T) {
 	}
 }
 
-func TestGitHubTokenPrefersEnvironment(t *testing.T) {
+func TestGitHubTokenIsOptional(t *testing.T) {
 	t.Setenv("GH_TOKEN", " gh-token ")
 	t.Setenv("GITHUB_TOKEN", "other")
 	if got := githubToken(); got != "gh-token" {
@@ -58,17 +58,21 @@ func TestGitHubTokenPrefersEnvironment(t *testing.T) {
 	if got := githubToken(); got != "other" {
 		t.Fatalf("token=%q", got)
 	}
+	t.Setenv("GITHUB_TOKEN", "")
+	if got := githubToken(); got != "" {
+		t.Fatalf("anonymous token=%q", got)
+	}
 }
 
-func TestGitHubReleaseHTTPFlow(t *testing.T) {
+func TestGitHubReleaseHTTPFlowIsAnonymous(t *testing.T) {
 	oldBase := githubAPIBase
 	oldClient := githubHTTPClient
 	defer func() { githubAPIBase = oldBase; githubHTTPClient = oldClient }()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/ecylmz/cx/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Errorf("authorization=%q", r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected authorization=%q", r.Header.Get("Authorization"))
 		}
 		if !strings.Contains(r.Header.Get("User-Agent"), "cx/") {
 			t.Errorf("user-agent=%q", r.Header.Get("User-Agent"))
@@ -77,6 +81,9 @@ func TestGitHubReleaseHTTPFlow(t *testing.T) {
 		_, _ = io.WriteString(w, `{"tag_name":"v9.9.9","assets":[{"id":7,"name":"cx-linux-amd64"},{"id":8,"name":"SHA256SUMS"}]}`)
 	})
 	mux.HandleFunc("/repos/ecylmz/cx/releases/assets/7", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected authorization=%q", r.Header.Get("Authorization"))
+		}
 		_, _ = w.Write([]byte("payload"))
 	})
 	srv := httptest.NewServer(mux)
@@ -85,35 +92,27 @@ func TestGitHubReleaseHTTPFlow(t *testing.T) {
 	githubHTTPClient = srv.Client()
 
 	ctx := context.Background()
-	rel, err := fetchLatestRelease(ctx, "secret")
+	rel, err := fetchLatestRelease(ctx, "")
 	if err != nil || rel.TagName != "v9.9.9" || len(rel.Assets) != 2 {
 		t.Fatalf("release=%+v err=%v", rel, err)
 	}
-	b, err := downloadReleaseAsset(ctx, "secret", 7)
+	b, err := downloadReleaseAsset(ctx, "", 7)
 	if err != nil || string(b) != "payload" {
 		t.Fatalf("asset=%q err=%v", b, err)
 	}
 }
 
-func TestGitHubLatestReleasePrivateErrorAndBadJSON(t *testing.T) {
+func TestGitHubLatestReleaseNotFound(t *testing.T) {
 	oldBase := githubAPIBase
 	oldClient := githubHTTPClient
 	defer func() { githubAPIBase = oldBase; githubHTTPClient = oldClient }()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/ecylmz/cx/releases/latest" {
-			if r.URL.Query().Get("bad") == "1" {
-				_, _ = io.WriteString(w, "{")
-				return
-			}
-			http.NotFound(w, r)
-		}
-	}))
+	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	githubAPIBase = srv.URL
 	githubHTTPClient = srv.Client()
-	if _, err := fetchLatestRelease(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "private") {
-		t.Fatalf("expected private error, got %v", err)
+	if _, err := fetchLatestRelease(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "no GitHub release found") {
+		t.Fatalf("expected not-found error, got %v", err)
 	}
 }
 
