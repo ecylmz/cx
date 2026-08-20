@@ -33,3 +33,25 @@ func TestRelativeDuration(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestLooksLikeUnstartedWindow(t *testing.T) {
+	now := time.Date(2026, 8, 20, 20, 56, 0, 0, time.Local)
+	u := WeeklyUsage{
+		UsedPercent:   0,
+		WindowMinutes: 7 * 24 * 60,
+		ResetsAt:      now.Add(7 * 24 * time.Hour).Unix(),
+		FetchedAt:     now,
+	}
+	if !looksLikeUnstartedWindow(u, now) {
+		t.Fatal("expected unused moving weekly window to be treated as not started")
+	}
+	u.ResetsAt = now.Add(5 * 24 * time.Hour).Unix()
+	if looksLikeUnstartedWindow(u, now) {
+		t.Fatal("expected fixed active reset to be treated as started")
+	}
+	u.ResetsAt = now.Add(7 * 24 * time.Hour).Unix()
+	u.UsedPercent = 1
+	if looksLikeUnstartedWindow(u, now) {
+		t.Fatal("used window must be treated as started")
+	}
+}
