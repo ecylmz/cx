@@ -18,6 +18,7 @@ import (
 const (
 	usageConcurrency = 8
 	primeConcurrency = 4
+	usageTimeout     = 6 * time.Second
 )
 
 type UsageResult struct {
@@ -160,7 +161,7 @@ func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return WeeklyUsage{}, errors.New("codex executable not found")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "app-server")
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+p.accountDir(a.ID))

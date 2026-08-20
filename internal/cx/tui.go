@@ -21,12 +21,9 @@ func runDashboard(p paths) error {
 	sel := 0
 	for {
 		if isTerminal() {
-			fmt.Print("\r\x1b[2K" + dim("cx · refreshing live quotas…"))
+			drawCachedDashboard(p, accounts, sel)
 		}
 		results := fetchAllUsageWithPriming(p, accounts)
-		if isTerminal() {
-			fmt.Print("\r\x1b[2K")
-		}
 		cache, _ := loadCache(p)
 		for i := range results {
 			if results[i].Err != "" {
@@ -57,6 +54,28 @@ func runDashboard(p paths) error {
 			continue
 		}
 	}
+}
+
+func drawCachedDashboard(p paths, accounts []Account, sel int) {
+	cache, _ := loadCache(p)
+	if len(cache) == 0 {
+		fmt.Print("\x1b[2J\x1b[H")
+		fmt.Println(dim(" cx · refreshing live quotas…"))
+		return
+	}
+	results := make([]UsageResult, len(accounts))
+	for i, a := range accounts {
+		results[i].Account = a
+		if old, ok := cache[a.ID]; ok {
+			old.Fresh = false
+			results[i].Usage = old
+			results[i].Err = "refreshing live quota"
+		} else {
+			results[i].Err = "refreshing live quota"
+		}
+	}
+	drawDashboard(p, accounts, results, sel)
+	fmt.Println(dim(" refreshing live quotas…"))
 }
 
 func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) (int, string, error) {

@@ -111,3 +111,15 @@ func TestFetchAllUsageReportsMissingCodex(t *testing.T) {
 		t.Fatalf("results=%+v", rs)
 	}
 }
+
+func TestUsageConcurrencyKeepsSmallAccountSetsParallel(t *testing.T) {
+	if usageConcurrency < 5 {
+		t.Fatalf("usageConcurrency=%d; five-account dashboard should fetch in one wave", usageConcurrency)
+	}
+	if primeConcurrency < 4 {
+		t.Fatalf("primeConcurrency=%d; first-time weekly-window starts should not serialize four accounts", primeConcurrency)
+	}
+	if usageTimeout > 6*time.Second {
+		t.Fatalf("usageTimeout=%s; one stalled account should not block status too long", usageTimeout)
+	}
+}

@@ -81,3 +81,13 @@ func TestDrawDashboard(t *testing.T) {
 		}
 	}
 }
+
+func TestRawModePreservesTerminalLineEndings(t *testing.T) {
+	args := rawModeArgs()
+	joined := " " + strings.Join(args, " ") + " "
+	for _, want := range []string{" raw ", " -echo ", " opost ", " onlcr "} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("rawModeArgs()=%q missing %q", args, strings.TrimSpace(want))
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPrimeWeeklyWindowErrorsWithoutCodex(t *testing.T) {
@@ -26,5 +27,11 @@ func TestPrimeWeeklyWindowPropagatesExecFailure(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if err := primeWeeklyWindow(p, Account{ID: "a"}); err == nil {
 		t.Fatal("expected exec failure")
+	}
+}
+
+func TestPrimeTimeoutIsBoundedForInteractiveUse(t *testing.T) {
+	if primeTimeout > 30*time.Second {
+		t.Fatalf("primeTimeout=%s; interactive dashboard can block too long", primeTimeout)
 	}
 }
