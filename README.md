@@ -9,7 +9,7 @@ The active `~/.codex/auth.json` is a symlink to the selected account credential.
 - Add accounts with the official `codex login --device-auth` flow.
 - Interactive account selection and atomic symlink switching.
 - Shared Codex sessions/memories/history across accounts.
-- **Weekly quota only**: live used/remaining percentage and reset time.
+- **Weekly quota only**: live used/remaining percentage, locale-aware full reset date/time, and remaining duration.
 - `cx` and `cx status` perform a live `account/rateLimits/read` through `codex app-server` every time.
 - Cached quota is used only as a visibly stale fallback when a live request fails.
 - JSON status output for scripting.
@@ -81,7 +81,7 @@ Dashboard keys: `↑/↓` or `j/k`, `enter`, `r`, `q`.
 
 ## Quota behavior
 
-Only the longest Codex rate-limit window is shown, which is treated as the weekly window. No 5-hour window is displayed.
+Only the longest Codex rate-limit window is shown, which is treated as the weekly window. No 5-hour window is displayed. Reset timestamps are rendered as a full local date/time plus a relative countdown. `LC_TIME`/`LC_ALL` are honored; on macOS `AppleLocale` is used as a system fallback, then `LANG`.
 
 Every dashboard/status refresh starts `codex app-server` under the selected account's credential home, performs the normal initialization handshake, and calls `account/rateLimits/read`. This deliberately leaves token refresh to Codex itself. A quota read is a status request, not a model request; `cx` does not send dummy prompts to consume quota merely to start a rolling window.
 
