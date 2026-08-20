@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          build() {
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
+              -o "dist/cx-$1-$2" .
+          }
+          build darwin arm64
+          build darwin amd64
+          build linux amd64
+          build linux arm64
+          chmod +x dist/cx-*
+          (cd dist && sha256sum cx-* > SHA256SUMS)
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/cx-darwin-arm64 \
+            dist/cx-darwin-amd64 \
+            dist/cx-linux-amd64 \
+            dist/cx-linux-arm64 \
+            dist/SHA256SUMS \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"
