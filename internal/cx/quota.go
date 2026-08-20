@@ -158,6 +158,18 @@ func rememberWeeklyReset(p paths, a Account, resetAt int64) (Account, error) {
 }
 
 func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
+	u, directErr := fetchUsageDirect(p, a)
+	if directErr == nil {
+		return u, nil
+	}
+	u, appErr := fetchUsageViaAppServer(p, a)
+	if appErr == nil {
+		return u, nil
+	}
+	return WeeklyUsage{}, fmt.Errorf("direct usage read: %v; app-server fallback: %w", directErr, appErr)
+}
+
+func fetchUsageViaAppServer(p paths, a Account) (WeeklyUsage, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return WeeklyUsage{}, errors.New("codex executable not found")
 	}
