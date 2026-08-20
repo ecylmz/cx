@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "0.1.1"
+var version = "dev"
 
 func main() {
 	p, err := resolvePaths()
@@ -84,6 +84,10 @@ func main() {
 	case "doctor":
 		if err := doctor(p); err != nil {
 			os.Exit(1)
+		}
+	case "update":
+		if err := handleUpdate(args[1:]); err != nil {
+			fatal(err)
 		}
 	default:
 		fatal(fmt.Errorf("unknown command %q; run cx help", args[0]))
@@ -225,6 +229,7 @@ Usage:
   cx rename OLD NEW
   cx remove NAME
   cx doctor
+  cx update [--force]        install latest GitHub release
   cx version
 
 Dashboard keys: ↑/↓ or j/k select · enter switch · r refresh · q quit
