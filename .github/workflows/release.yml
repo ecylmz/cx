@@ -4,28 +4,63 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  build-release:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
+              echo "invalid version: $VERSION" >&2
+              exit 1
+            }
+            TAG="v$VERSION"
+          else
+            TAG="$GITHUB_REF_NAME"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Test
         run: |
           go test ./...
           go vet ./...
-      - name: Build release binaries
+
+      - name: Build
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           build() {
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 \
@@ -36,17 +71,31 @@ jobs:
           build darwin amd64
           build linux amd64
           build linux arm64
-          chmod +x dist/cx-*
+          chmod 0755 dist/cx-*
           (cd dist && sha256sum cx-* > SHA256SUMS)
-      - name: Create GitHub release
+
+      - name: Publish
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            dist/cx-darwin-arm64 \
-            dist/cx-darwin-amd64 \
-            dist/cx-linux-amd64 \
-            dist/cx-linux-arm64 \
-            dist/SHA256SUMS \
-            --generate-notes \
-            --title "$GITHUB_REF_NAME"
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists" >&2
+            exit 1
+          fi
+          args=(
+            "$TAG"
+            dist/cx-darwin-arm64
+            dist/cx-darwin-amd64
+            dist/cx-linux-amd64
+            dist/cx-linux-arm64
+            dist/SHA256SUMS
+            --generate-notes
+            --title "$TAG"
+          )
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            args+=(--target "$GITHUB_SHA")
+          fi
+          gh release create "${args[@]}"
