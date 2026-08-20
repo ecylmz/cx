@@ -129,12 +129,6 @@ func githubToken() string {
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		return token
 	}
-	if _, err := exec.LookPath("gh"); err == nil {
-		cmd := exec.Command("gh", "auth", "token")
-		if out, err := cmd.Output(); err == nil {
-			return strings.TrimSpace(string(out))
-		}
-	}
 	return ""
 }
 
@@ -145,8 +139,8 @@ func fetchLatestRelease(ctx context.Context, token string) (githubRelease, error
 	if err != nil {
 		return rel, err
 	}
-	if status == http.StatusNotFound && token == "" {
-		return rel, errors.New("latest release is not accessible; cx is private, so run `gh auth login` or set GH_TOKEN")
+	if status == http.StatusNotFound {
+		return rel, errors.New("no GitHub release found")
 	}
 	if status != http.StatusOK {
 		return rel, fmt.Errorf("GitHub latest-release request failed: HTTP %d", status)
@@ -166,10 +160,10 @@ func downloadReleaseAsset(ctx context.Context, token string, assetID int64) ([]b
 	if err != nil {
 		return nil, err
 	}
+	if status == http.StatusNotFound {
+		return nil, errors.New("release asset not found")
+	}
 	if status != http.StatusOK {
-		if status == http.StatusNotFound && token == "" {
-			return nil, errors.New("release asset is private; run `gh auth login` or set GH_TOKEN")
-		}
 		return nil, fmt.Errorf("GitHub release download failed: HTTP %d", status)
 	}
 	return body, nil
