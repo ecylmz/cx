@@ -77,8 +77,6 @@ func localeName() string {
 			return v
 		}
 	}
-	// macOS keeps the user's regional date preference in AppleLocale even when
-	// a terminal does not export LC_TIME explicitly.
 	if runtime.GOOS == "darwin" {
 		if out, err := exec.Command("defaults", "read", "-g", "AppleLocale").Output(); err == nil {
 			if v := normalizeLocale(string(out)); v != "" {
@@ -94,8 +92,6 @@ func localeName() string {
 
 func localDateLayout(locale string) string {
 	locale = normalizeLocale(locale)
-	// Numeric dates avoid untranslated month/day names while still following
-	// the user's common locale ordering and separators.
 	switch {
 	case strings.HasPrefix(locale, "en_us"):
 		return "01/02/2006 3:04 PM"
@@ -163,10 +159,28 @@ func shortDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", m)
 }
 
+func looksLikeUnstartedWindow(u WeeklyUsage, now time.Time) bool {
+	if u.WindowStarted || u.UsedPercent != 0 || u.WindowMinutes <= 0 || u.ResetsAt <= 0 {
+		return false
+	}
+	ref := now
+	if !u.FetchedAt.IsZero() {
+		ref = u.FetchedAt
+	}
+	want := time.Duration(u.WindowMinutes) * time.Minute
+	got := time.Unix(u.ResetsAt, 0).Sub(ref)
+	tolerance := 2 * time.Minute
+	return got >= want-tolerance && got <= want+tolerance
+}
+
 func usageLine(u WeeklyUsage) string {
 	left := clamp(100-u.UsedPercent, 0, 100)
 	pct := quotaColor(left, fmt.Sprintf("%5.1f%% left", left))
-	return fmt.Sprintf("  weekly  %s  %s   resets %s", quotaColor(left, bar(u.UsedPercent, 22)), pct, resetText(u.ResetsAt, time.Now()))
+	base := fmt.Sprintf("  weekly  %s  %s", quotaColor(left, bar(u.UsedPercent, 22)), pct)
+	if looksLikeUnstartedWindow(u, time.Now()) {
+		return base + "   " + dim("not started")
+	}
+	return base + "   resets " + resetText(u.ResetsAt, time.Now())
 }
 
 func printStatus(p paths, accounts []Account, results []UsageResult) {
@@ -190,7 +204,13 @@ func printStatus(p paths, accounts []Account, results []UsageResult) {
 		fmt.Println()
 		if r.Err == "" {
 			fmt.Println(usageLine(r.Usage))
-			fmt.Println(dim("  live · updated just now"))
+			if r.PrimeErr != "" {
+				fmt.Printf("  %s · %s\n", red("window start failed"), r.PrimeErr)
+			} else if r.Primed {
+				fmt.Println(dim("  live · weekly window started just now"))
+			} else {
+				fmt.Println(dim("  live · updated just now"))
+			}
 		} else if !r.Usage.FetchedAt.IsZero() {
 			fmt.Println(usageLine(r.Usage))
 			fmt.Printf("  %s cached %s ago · %s\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)), r.Err)
@@ -218,6 +238,8 @@ func statusJSON(p paths, accounts []Account, results []UsageResult) any {
 		u := r.Usage
 		if r.Err != "" {
 			u.Err = r.Err
+		} else if r.PrimeErr != "" {
+			u.Err = r.PrimeErr
 		}
 		out = append(out, jsonAccountStatus{Name: r.Account.Name, Email: r.Account.Email, Plan: r.Account.Plan, Active: r.Account.ID == st.ActiveID, Weekly: u})
 	}
