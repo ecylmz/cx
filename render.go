@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -58,23 +60,97 @@ func bar(used float64, width int) string {
 	n := int(math.Round(used / 100 * float64(width)))
 	return strings.Repeat("█", n) + strings.Repeat("░", width-n)
 }
+func normalizeLocale(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		v = v[:i]
+	}
+	if i := strings.IndexByte(v, '@'); i >= 0 {
+		v = v[:i]
+	}
+	return strings.ToLower(strings.ReplaceAll(v, "-", "_"))
+}
+
+func localeName() string {
+	for _, key := range []string{"LC_TIME", "LC_ALL"} {
+		if v := normalizeLocale(os.Getenv(key)); v != "" && v != "c" && v != "posix" {
+			return v
+		}
+	}
+	// macOS keeps the user's regional date preference in AppleLocale even when
+	// a terminal does not export LC_TIME explicitly.
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("defaults", "read", "-g", "AppleLocale").Output(); err == nil {
+			if v := normalizeLocale(string(out)); v != "" {
+				return v
+			}
+		}
+	}
+	if v := normalizeLocale(os.Getenv("LANG")); v != "" && v != "c" && v != "posix" {
+		return v
+	}
+	return ""
+}
+
+func localDateLayout(locale string) string {
+	locale = normalizeLocale(locale)
+	// Numeric dates avoid untranslated month/day names while still following
+	// the user's common locale ordering and separators.
+	switch {
+	case strings.HasPrefix(locale, "en_us"):
+		return "01/02/2006 3:04 PM"
+	case strings.HasPrefix(locale, "en_ca"):
+		return "2006-01-02 15:04"
+	case strings.HasPrefix(locale, "ja"), strings.HasPrefix(locale, "ko"), strings.HasPrefix(locale, "zh"):
+		return "2006/01/02 15:04"
+	case strings.HasPrefix(locale, "tr"), strings.HasPrefix(locale, "de"), strings.HasPrefix(locale, "da"), strings.HasPrefix(locale, "fi"), strings.HasPrefix(locale, "no"), strings.HasPrefix(locale, "ru"):
+		return "02.01.2006 15:04"
+	case strings.HasPrefix(locale, "en_gb"), strings.HasPrefix(locale, "fr"), strings.HasPrefix(locale, "es"), strings.HasPrefix(locale, "it"), strings.HasPrefix(locale, "pt"), strings.HasPrefix(locale, "nl"):
+		return "02/01/2006 15:04"
+	default:
+		return "2006-01-02 15:04"
+	}
+}
+
+func exactResetText(epoch int64) string {
+	if epoch <= 0 {
+		return "unknown"
+	}
+	return time.Unix(epoch, 0).Local().Format(localDateLayout(localeName()))
+}
+
 func resetText(epoch int64, now time.Time) string {
 	if epoch <= 0 {
 		return "unknown"
 	}
-	t := time.Unix(epoch, 0)
+	t := time.Unix(epoch, 0).Local()
 	d := t.Sub(now)
+	exact := t.Format(localDateLayout(localeName()))
 	if d <= 0 {
-		return "now"
+		return exact + " · now"
 	}
-	if d < 24*time.Hour {
-		return shortDuration(d)
-	}
-	if d < 7*24*time.Hour {
-		return t.Local().Format("Mon 15:04")
-	}
-	return t.Local().Format("Jan 02 15:04")
+	return exact + " · in " + relativeDuration(d)
 }
+
+func relativeDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d / (24 * time.Hour))
+	hours := int(d/time.Hour) % 24
+	mins := int(d/time.Minute) % 60
+	if days > 0 {
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %02dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
+}
+
 func shortDuration(d time.Duration) string {
 	if d < 0 {
 		d = 0
