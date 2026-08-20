@@ -16,9 +16,11 @@ import (
 )
 
 type UsageResult struct {
-	Account Account
-	Usage   WeeklyUsage
-	Err     string
+	Account  Account
+	Usage    WeeklyUsage
+	Err      string
+	PrimeErr string
+	Primed   bool
 }
 
 type rpcEnvelope struct {
@@ -63,6 +65,90 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 	}
 	wg.Wait()
 	return out
+}
+
+func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
+	results := fetchAllUsage(p, accounts)
+	for i := range results {
+		if results[i].Err == "" {
+			annotateWindowState(p, &results[i])
+		}
+	}
+
+	sem := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+	for i := range results {
+		if results[i].Err != "" || results[i].Usage.WindowStarted {
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := primeWeeklyWindow(p, results[i].Account); err != nil {
+				results[i].PrimeErr = err.Error()
+				return
+			}
+			u, err := fetchUsage(p, results[i].Account)
+			if err != nil {
+				results[i].PrimeErr = "window-start turn succeeded, but quota refresh failed: " + err.Error()
+				return
+			}
+			u.WindowStarted = true
+			results[i].Usage = u
+			results[i].Primed = true
+			if u.ResetsAt > 0 {
+				if a, err := rememberWeeklyReset(p, results[i].Account, u.ResetsAt); err == nil {
+					results[i].Account = a
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	return results
+}
+
+func annotateWindowState(p paths, r *UsageResult) {
+	now := time.Now()
+	u := &r.Usage
+	if u.UsedPercent > 0 {
+		u.WindowStarted = true
+		if u.ResetsAt > 0 {
+			if a, err := rememberWeeklyReset(p, r.Account, u.ResetsAt); err == nil {
+				r.Account = a
+			}
+		}
+		return
+	}
+	if r.Account.WeeklyResetAt > now.Unix() && u.ResetsAt > 0 {
+		delta := r.Account.WeeklyResetAt - u.ResetsAt
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta <= 120 {
+			u.WindowStarted = true
+			return
+		}
+	}
+	u.WindowStarted = !looksLikeUnstartedWindow(*u, now)
+	if u.WindowStarted && u.ResetsAt > 0 {
+		if a, err := rememberWeeklyReset(p, r.Account, u.ResetsAt); err == nil {
+			r.Account = a
+		}
+	}
+}
+
+func rememberWeeklyReset(p paths, a Account, resetAt int64) (Account, error) {
+	if resetAt <= 0 || a.WeeklyResetAt == resetAt {
+		return a, nil
+	}
+	a.WeeklyResetAt = resetAt
+	a.UpdatedAt = time.Now()
+	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+		return a, err
+	}
+	return a, nil
 }
 
 func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
