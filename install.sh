@@ -72,6 +72,32 @@ install_binary() {
   prepare_macos_binary "$DEST_DIR/cx"
 }
 
+build_source() {
+  command -v go >/dev/null 2>&1 || fail "Go is required to build from source"
+  [ -f "$ROOT/go.mod" ] || fail "run source builds from a cx checkout"
+  version=$(git -C "$ROOT" describe --tags --always 2>/dev/null | sed 's/^v//' || printf dev)
+  (cd "$ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o "$TMPDIR_CX/cx" .)
+  install_binary "$TMPDIR_CX/cx"
+}
+
+release_available() {
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh release view --repo "$REPO" >/dev/null 2>&1
+    return $?
+  fi
+  command -v curl >/dev/null 2>&1 || return 1
+  token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  if [ -n "$token" ]; then
+    curl -fsSL -o /dev/null \
+      -H "Authorization: Bearer $token" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/$REPO/releases/latest"
+  else
+    curl -fsSL -o /dev/null "https://github.com/$REPO/releases/latest"
+  fi
+}
+
 download_release() {
   out="$TMPDIR_CX/$ASSET"
   sums="$TMPDIR_CX/SHA256SUMS"
@@ -123,13 +149,14 @@ PY
 }
 
 if [ "${CX_BUILD_FROM_SOURCE:-0}" = 1 ]; then
-  command -v go >/dev/null 2>&1 || fail "Go is required for CX_BUILD_FROM_SOURCE=1"
-  [ -f "$ROOT/go.mod" ] || fail "run source builds from a cx checkout"
-  version=$(git -C "$ROOT" describe --tags --always 2>/dev/null | sed 's/^v//' || printf dev)
-  (cd "$ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o "$TMPDIR_CX/cx" .)
-  install_binary "$TMPDIR_CX/cx"
+  build_source
 elif [ -f "$PREBUILT" ]; then
   install_binary "$PREBUILT"
+elif release_available; then
+  download_release
+elif [ -f "$ROOT/go.mod" ] && command -v go >/dev/null 2>&1; then
+  echo "no release found; building current checkout"
+  build_source
 else
   download_release
 fi
