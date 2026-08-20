@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - VERSION
   workflow_dispatch:
     inputs:
       version:
@@ -38,15 +42,18 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             VERSION="${{ inputs.version }}"
             VERSION="${VERSION#v}"
-            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
-              echo "invalid version: $VERSION" >&2
-              exit 1
-            }
             TAG="v$VERSION"
-          else
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="$GITHUB_REF_NAME"
             VERSION="${TAG#v}"
+          else
+            VERSION="$(tr -d '[:space:]' < VERSION)"
+            TAG="v$VERSION"
           fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -95,7 +102,7 @@ jobs:
             --generate-notes
             --title "$TAG"
           )
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
             args+=(--target "$GITHUB_SHA")
           fi
           gh release create "${args[@]}"
