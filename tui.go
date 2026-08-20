@@ -20,7 +20,7 @@ func runDashboard(p paths) error {
 	}
 	sel := 0
 	for {
-		results := fetchAllUsage(p, accounts)
+		results := fetchAllUsageWithPriming(p, accounts)
 		cache, _ := loadCache(p)
 		for i := range results {
 			if results[i].Err != "" {
@@ -112,6 +112,11 @@ func drawDashboard(p paths, accounts []Account, results []UsageResult, sel int) 
 		fmt.Println()
 		if r.Err == "" {
 			fmt.Println("   " + usageLine(r.Usage)[2:])
+			if r.PrimeErr != "" {
+				fmt.Printf("   %s %s\n", red("window start failed"), r.PrimeErr)
+			} else if r.Primed {
+				fmt.Println("   " + dim("weekly window started just now"))
+			}
 		} else if !r.Usage.FetchedAt.IsZero() {
 			fmt.Println("   " + usageLine(r.Usage)[2:])
 			fmt.Printf("   %s · cached %s ago\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)))
