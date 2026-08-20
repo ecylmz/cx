@@ -156,7 +156,7 @@ func handleStatus(p paths, args []string) int {
 		fatal(errors.New("no accounts; add one with: cx add NAME"))
 	}
 
-	results := fetchAllUsage(p, accounts)
+	results := fetchAllUsageWithPriming(p, accounts)
 	cache, _ := loadCache(p)
 	failed := 0
 	for i := range results {
@@ -167,6 +167,9 @@ func handleStatus(p paths, args []string) int {
 				old.Err = results[i].Err
 				results[i].Usage = old
 			}
+		}
+		if results[i].PrimeErr != "" {
+			failed++
 		}
 	}
 	saveFreshCache(p, results)
@@ -219,8 +222,8 @@ func printHelp() {
 	fmt.Print(`cx — minimal Codex account switcher
 
 Usage:
-  cx                         live weekly quota dashboard
-  cx status [NAME] [--json] live weekly quota status
+  cx                         live weekly quota dashboard; starts unused window
+  cx status [NAME] [--json] live weekly quota status; starts unused window
   cx add [NAME]             add account with Codex device auth
   cx relogin NAME           replace one account's credential safely
   cx use [NAME] [--resume]  switch account; interactive if NAME omitted
