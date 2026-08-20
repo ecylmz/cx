@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const primeTimeout = 30 * time.Second
+
 // primeWeeklyWindow intentionally performs one real Codex turn. It is used
 // only when the server reports an unused rolling weekly window. The turn is
 // ephemeral, runs in an empty temporary directory with a read-only sandbox,
@@ -25,7 +27,7 @@ func primeWeeklyWindow(p paths, a Account) error {
 	}
 	defer os.RemoveAll(work)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), primeTimeout)
 	defer cancel()
 	args := []string{
 		"exec",
