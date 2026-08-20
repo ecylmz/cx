@@ -72,7 +72,6 @@ install_binary() {
   prepare_macos_binary "$DEST_DIR/cx"
 }
 
-
 build_source() {
   command -v go >/dev/null 2>&1 || fail "Go is required to build from source"
   [ -f "$ROOT/go.mod" ] || fail "run source builds from a cx checkout"
@@ -81,70 +80,19 @@ build_source() {
   install_binary "$TMPDIR_CX/cx"
 }
 
-release_available() {
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    gh release view --repo "$REPO" >/dev/null 2>&1
-    return $?
-  fi
-  command -v curl >/dev/null 2>&1 || return 1
-  token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
-  if [ -n "$token" ]; then
-    curl -fsSL -o /dev/null \
-      -H "Authorization: Bearer $token" \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      "https://api.github.com/repos/$REPO/releases/latest"
-  else
-    curl -fsSL -o /dev/null "https://github.com/$REPO/releases/latest"
-  fi
-}
-
 download_release() {
+  command -v curl >/dev/null 2>&1 || fail "curl is required"
   out="$TMPDIR_CX/$ASSET"
   sums="$TMPDIR_CX/SHA256SUMS"
+  base="https://github.com/$REPO/releases/latest/download"
 
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    gh release download --repo "$REPO" --pattern "$ASSET" --pattern SHA256SUMS --dir "$TMPDIR_CX" >/dev/null
-  elif [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
-    token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
-    command -v curl >/dev/null 2>&1 || fail "curl is required"
-    command -v python3 >/dev/null 2>&1 || fail "python3 is required when using GH_TOKEN without gh"
-
-    meta="$TMPDIR_CX/release.json"
-    curl -fsSL \
-      -H "Authorization: Bearer $token" \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      "https://api.github.com/repos/$REPO/releases/latest" -o "$meta"
-
-    ids=$(python3 - "$meta" "$ASSET" <<'PY'
-import json, sys
-meta = json.load(open(sys.argv[1]))
-want = {sys.argv[2], "SHA256SUMS"}
-assets = {a.get("name"): a.get("id") for a in meta.get("assets", []) if a.get("name") in want}
-print(assets.get(sys.argv[2], ""))
-print(assets.get("SHA256SUMS", ""))
-PY
-)
-    asset_id=$(printf '%s\n' "$ids" | sed -n '1p')
-    sums_id=$(printf '%s\n' "$ids" | sed -n '2p')
-    [ -n "$asset_id" ] || fail "latest release does not contain $ASSET"
-    [ -n "$sums_id" ] || fail "latest release does not contain SHA256SUMS"
-
-    curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" \
-      "https://api.github.com/repos/$REPO/releases/assets/$asset_id" -o "$out"
-    curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" \
-      "https://api.github.com/repos/$REPO/releases/assets/$sums_id" -o "$sums"
-  else
-    command -v curl >/dev/null 2>&1 || fail "curl is required"
-    base="https://github.com/$REPO/releases/latest/download"
-    if ! curl -fsSL "$base/$ASSET" -o "$out" || ! curl -fsSL "$base/SHA256SUMS" -o "$sums"; then
-      fail "release download failed; for a private repository run 'gh auth login' or set GH_TOKEN"
-    fi
+  if ! curl -fsSL "$base/$ASSET" -o "$out"; then
+    return 1
+  fi
+  if ! curl -fsSL "$base/SHA256SUMS" -o "$sums"; then
+    return 1
   fi
 
-  [ -f "$out" ] || fail "release download failed: $ASSET"
-  [ -f "$sums" ] || fail "release download failed: SHA256SUMS"
   verify_download "$out" "$sums"
   install_binary "$out"
 }
@@ -153,13 +101,13 @@ if [ "${CX_BUILD_FROM_SOURCE:-0}" = 1 ]; then
   build_source
 elif [ -f "$PREBUILT" ]; then
   install_binary "$PREBUILT"
-elif release_available; then
-  download_release
+elif download_release; then
+  :
 elif [ -f "$ROOT/go.mod" ] && command -v go >/dev/null 2>&1; then
-  echo "no release found; building current checkout"
+  echo "release download failed; building current checkout"
   build_source
 else
-  download_release
+  fail "could not download the latest release"
 fi
 
 printf 'installed %s\n' "$DEST_DIR/cx"
