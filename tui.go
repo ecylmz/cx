@@ -177,16 +177,28 @@ func pickAccount(p paths) (Account, error) {
 
 func isTerminal() bool { s, _ := os.Stdin.Stat(); return s != nil && (s.Mode()&os.ModeCharDevice) != 0 }
 func rawMode() (string, error) {
-	b, err := exec.Command("stty", "-g").Output()
+	get := exec.Command("stty", "-g")
+	get.Stdin = os.Stdin
+	b, err := get.CombinedOutput()
 	if err != nil {
-		return "", err
+		msg := strings.TrimSpace(string(b))
+		if msg != "" {
+			return "", fmt.Errorf("read terminal mode: %w: %s", err, msg)
+		}
+		return "", fmt.Errorf("read terminal mode: %w", err)
 	}
 	old := strings.TrimSpace(string(b))
 	cmd := exec.Command("stty", "raw", "-echo")
 	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		return "", err
+	b, err = cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(b))
+		if msg != "" {
+			return "", fmt.Errorf("enable terminal raw mode: %w: %s", err, msg)
+		}
+		return "", fmt.Errorf("enable terminal raw mode: %w", err)
 	}
+	fmt.Print("\x1b[?25l")
 	return old, nil
 }
 func restoreMode(old string) {
