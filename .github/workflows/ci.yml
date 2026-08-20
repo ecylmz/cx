@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, initial-cx-import]
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -24,11 +25,11 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./...
-      - name: Validate installer syntax
+      - name: Validate installer
         run: sh -n install.sh
-      - name: Installer smoke test
+      - name: Source install smoke test
         shell: bash
         run: |
           set -euo pipefail
-          CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
+          CX_BUILD_FROM_SOURCE=1 CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
           "$RUNNER_TEMP/bin/cx" version
