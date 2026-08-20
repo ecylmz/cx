@@ -22,7 +22,7 @@ cx add backup
 cx
 ```
 
-The dashboard shows the active account, weekly quota remaining, and the full local reset date/time. If a new account's weekly window has not started yet, `cx` sends one minimal ephemeral Codex request to start it.
+The dashboard shows the active account, weekly quota remaining, and the full local reset date/time. It draws cached values immediately while refreshing live quota data. If a new account's weekly window has not started yet, `cx` sends one minimal ephemeral Codex request to start it.
 
 ```sh
 cx                    # dashboard
