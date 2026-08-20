@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 func testAuthBytes(t *testing.T, accountID string) []byte {
@@ -99,5 +101,99 @@ while :; do sleep 1; done
 	}
 	if u.UsedPercent != 37 || u.WindowMinutes != 10080 || u.ResetsAt != 2000000000 {
 		t.Fatalf("bad usage: %+v", u)
+	}
+}
+
+func TestFetchUsageWithPrimingStartsWindowOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell helper")
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "primed-reset")
+	count := filepath.Join(root, "prime-count")
+	argsLog := filepath.Join(root, "prime-args")
+	script := `#!/bin/sh
+case "$1" in
+  app-server)
+    if [ -f "$CX_TEST_MARKER" ]; then
+      reset=$(cat "$CX_TEST_MARKER")
+    else
+      now=$(date +%s)
+      reset=$((now + 604800))
+    fi
+    IFS= read -r init
+    echo '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}'
+    IFS= read -r initialized
+    IFS= read -r request
+    echo "{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":0,\"windowDurationMins\":10080,\"resetsAt\":$reset},\"secondary\":null},\"rateLimitsByLimitId\":null,\"rateLimitResetCredits\":null}}"
+    while :; do sleep 1; done
+    ;;
+  exec)
+    now=$(date +%s)
+    echo $((now + 604800)) > "$CX_TEST_MARKER"
+    n=0
+    [ -f "$CX_TEST_COUNT" ] && n=$(cat "$CX_TEST_COUNT")
+    echo $((n + 1)) > "$CX_TEST_COUNT"
+    printf '%s\n' "$*" > "$CX_TEST_ARGS"
+    echo OK
+    ;;
+  *) exit 2 ;;
+esac
+`
+	fake := filepath.Join(bin, "codex")
+	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CX_TEST_MARKER", marker)
+	t.Setenv("CX_TEST_COUNT", count)
+	t.Setenv("CX_TEST_ARGS", argsLog)
+
+	p := paths{Home: root, CodexHome: filepath.Join(root, ".codex"), ConfigRoot: filepath.Join(root, "cfg"), DataRoot: filepath.Join(root, "data"), CacheRoot: filepath.Join(root, "cache")}
+	p.AccountsRoot = filepath.Join(p.DataRoot, "accounts")
+	if err := p.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	a := Account{ID: "id1", Name: "backup", AccountID: "acct", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := os.MkdirAll(p.accountDir(a.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := fetchAllUsageWithPriming(p, []Account{a})
+	if len(rs) != 1 || rs[0].Err != "" || rs[0].PrimeErr != "" {
+		t.Fatalf("unexpected result: %+v", rs)
+	}
+	if !rs[0].Usage.WindowStarted {
+		t.Fatal("weekly window should be marked started after real turn")
+	}
+	b, err := os.ReadFile(count)
+	if err != nil || strings.TrimSpace(string(b)) != "1" {
+		t.Fatalf("prime count=%q err=%v", b, err)
+	}
+	args, _ := os.ReadFile(argsLog)
+	for _, want := range []string{"exec", "--ephemeral", "--ignore-user-config", "--sandbox read-only"} {
+		if !strings.Contains(string(args), want) {
+			t.Fatalf("prime args missing %q: %s", want, args)
+		}
+	}
+
+	accounts, err := listAccounts(p)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts: %+v err=%v", accounts, err)
+	}
+	rs = fetchAllUsageWithPriming(p, accounts)
+	if rs[0].PrimeErr != "" || !rs[0].Usage.WindowStarted {
+		t.Fatalf("second result: %+v", rs[0])
+	}
+	b, _ = os.ReadFile(count)
+	if strings.TrimSpace(string(b)) != "1" {
+		t.Fatalf("window was primed more than once: %s", b)
 	}
 }
