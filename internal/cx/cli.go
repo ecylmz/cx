@@ -1,4 +1,4 @@
-package main
+package cx
 
 import (
 	"encoding/json"
@@ -9,9 +9,9 @@ import (
 	"strings"
 )
 
-var version = "dev"
+var Version = "dev"
 
-func main() {
+func Main() {
 	p, err := resolvePaths()
 	if err != nil {
 		fatal(err)
@@ -32,7 +32,7 @@ func main() {
 	case "help", "-h", "--help":
 		printHelp()
 	case "version", "--version":
-		fmt.Printf("cx %s\n", version)
+		fmt.Printf("cx %s\n", Version)
 	case "add":
 		name := ""
 		if len(args) > 1 {

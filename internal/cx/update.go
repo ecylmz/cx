@@ -1,4 +1,4 @@
-package main
+package cx
 
 import (
 	"context"
@@ -18,6 +18,9 @@ import (
 
 const githubRepo = "ecylmz/cx"
 
+var githubAPIBase = "https://api.github.com"
+var githubHTTPClient = &http.Client{Timeout: 40 * time.Second}
+
 type githubRelease struct {
 	TagName string `json:"tag_name"`
 	Assets  []struct {
@@ -36,22 +39,19 @@ func handleUpdate(args []string) error {
 			return errors.New("usage: cx update [--force]")
 		}
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-
 	token := githubToken()
 	rel, err := fetchLatestRelease(ctx, token)
 	if err != nil {
 		return err
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
-	current := strings.TrimPrefix(version, "v")
+	current := strings.TrimPrefix(Version, "v")
 	if !force && current != "" && current != "dev" && latest == current {
 		fmt.Printf("%s cx %s is already current\n", green("✓"), current)
 		return nil
 	}
-
 	assetName, err := platformAsset(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return err
@@ -71,7 +71,6 @@ func handleUpdate(args []string) error {
 	if sumsID == 0 {
 		return fmt.Errorf("release %s does not contain SHA256SUMS", rel.TagName)
 	}
-
 	payload, err := downloadReleaseAsset(ctx, token, assetID)
 	if err != nil {
 		return err
@@ -86,7 +85,6 @@ func handleUpdate(args []string) error {
 	if err := verifySHA256(assetName, payload, sums); err != nil {
 		return err
 	}
-
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve current executable: %w", err)
@@ -142,7 +140,7 @@ func githubToken() string {
 
 func fetchLatestRelease(ctx context.Context, token string) (githubRelease, error) {
 	var rel githubRelease
-	url := "https://api.github.com/repos/" + githubRepo + "/releases/latest"
+	url := githubAPIBase + "/repos/" + githubRepo + "/releases/latest"
 	body, status, err := githubGET(ctx, url, token, "application/vnd.github+json")
 	if err != nil {
 		return rel, err
@@ -163,7 +161,7 @@ func fetchLatestRelease(ctx context.Context, token string) (githubRelease, error
 }
 
 func downloadReleaseAsset(ctx context.Context, token string, assetID int64) ([]byte, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%d", githubRepo, assetID)
+	url := fmt.Sprintf("%s/repos/%s/releases/assets/%d", githubAPIBase, githubRepo, assetID)
 	body, status, err := githubGET(ctx, url, token, "application/octet-stream")
 	if err != nil {
 		return nil, err
@@ -184,12 +182,11 @@ func githubGET(ctx context.Context, url, token, accept string) ([]byte, int, err
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "cx/"+version)
+	req.Header.Set("User-Agent", "cx/"+Version)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 40 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}

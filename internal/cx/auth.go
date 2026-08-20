@@ -1,4 +1,4 @@
-package main
+package cx
 
 import (
 	"encoding/base64"

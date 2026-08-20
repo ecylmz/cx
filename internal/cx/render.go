@@ -1,4 +1,4 @@
-package main
+package cx
 
 import (
 	"fmt"
@@ -243,5 +243,5 @@ func statusJSON(p paths, accounts []Account, results []UsageResult) any {
 		}
 		out = append(out, jsonAccountStatus{Name: r.Account.Name, Email: r.Account.Email, Plan: r.Account.Plan, Active: r.Account.ID == st.ActiveID, Weekly: u})
 	}
-	return map[string]any{"version": version, "accounts": out}
+	return map[string]any{"version": Version, "accounts": out}
 }

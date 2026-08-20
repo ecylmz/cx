@@ -64,8 +64,8 @@ jobs:
           mkdir -p dist
           build() {
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 \
-              go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
-              -o "dist/cx-$1-$2" .
+              go build -trimpath -ldflags="-s -w -X github.com/ecylmz/cx/internal/cx.Version=$VERSION" \
+              -o "dist/cx-$1-$2" ./cmd/cx
           }
           build darwin arm64
           build darwin amd64

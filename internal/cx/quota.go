@@ -1,4 +1,4 @@
-package main
+package cx
 
 import (
 	"bufio"
@@ -177,7 +177,7 @@ func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
 	enc := json.NewEncoder(stdin)
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 1024), 4*1024*1024)
-	if err := enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "cx", "title": "cx", "version": version}}}); err != nil {
+	if err := enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "cx", "title": "cx", "version": Version}}}); err != nil {
 		return WeeklyUsage{}, err
 	}
 	if _, err := readResponse(scanner, 1); err != nil {
