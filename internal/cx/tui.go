@@ -20,7 +20,13 @@ func runDashboard(p paths) error {
 	}
 	sel := 0
 	for {
+		if isTerminal() {
+			fmt.Print("\r\x1b[2K" + dim("cx · refreshing live quotas…"))
+		}
 		results := fetchAllUsageWithPriming(p, accounts)
+		if isTerminal() {
+			fmt.Print("\r\x1b[2K")
+		}
 		cache, _ := loadCache(p)
 		for i := range results {
 			if results[i].Err != "" {
@@ -193,7 +199,7 @@ func rawMode() (string, error) {
 		return "", fmt.Errorf("read terminal mode: %w", err)
 	}
 	old := strings.TrimSpace(string(b))
-	cmd := exec.Command("stty", "raw", "-echo")
+	cmd := exec.Command("stty", rawModeArgs()...)
 	cmd.Stdin = os.Stdin
 	b, err = cmd.CombinedOutput()
 	if err != nil {
@@ -206,6 +212,14 @@ func rawMode() (string, error) {
 	fmt.Print("\x1b[?25l")
 	return old, nil
 }
+
+func rawModeArgs() []string {
+	// `stty raw` disables output post-processing, which makes `\n` move the
+	// cursor down without returning it to column zero. Keep raw input while
+	// restoring normal terminal line endings for fmt.Print/Println output.
+	return []string{"raw", "-echo", "opost", "onlcr"}
+}
+
 func restoreMode(old string) {
 	if old == "" {
 		return
