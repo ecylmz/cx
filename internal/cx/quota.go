@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+const (
+	usageConcurrency = 8
+	primeConcurrency = 4
+)
+
 type UsageResult struct {
 	Account  Account
 	Usage    WeeklyUsage
@@ -48,7 +53,7 @@ type rateResponse struct {
 
 func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 	out := make([]UsageResult, len(accounts))
-	sem := make(chan struct{}, 4)
+	sem := make(chan struct{}, usageConcurrency)
 	var wg sync.WaitGroup
 	for i, a := range accounts {
 		wg.Add(1)
@@ -75,7 +80,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 		}
 	}
 
-	sem := make(chan struct{}, 2)
+	sem := make(chan struct{}, primeConcurrency)
 	var wg sync.WaitGroup
 	for i := range results {
 		if results[i].Err != "" || results[i].Usage.WindowStarted {
