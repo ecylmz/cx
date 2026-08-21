@@ -55,10 +55,15 @@ func clamp(v, lo, hi float64) float64 {
 	}
 	return v
 }
-func bar(used float64, width int) string {
-	used = clamp(used, 0, 100)
-	n := int(math.Round(used / 100 * float64(width)))
+func bar(percent float64, width int) string {
+	percent = clamp(percent, 0, 100)
+	n := int(math.Round(percent / 100 * float64(width)))
 	return strings.Repeat("█", n) + strings.Repeat("░", width-n)
+}
+func quotaBar(left float64, width int) string {
+	left = clamp(left, 0, 100)
+	n := int(math.Round(left / 100 * float64(width)))
+	return strings.Repeat("█", n) + dim(strings.Repeat("░", width-n))
 }
 func normalizeLocale(v string) string {
 	v = strings.TrimSpace(v)
@@ -176,11 +181,11 @@ func looksLikeUnstartedWindow(u WeeklyUsage, now time.Time) bool {
 func usageLine(u WeeklyUsage) string {
 	left := clamp(100-u.UsedPercent, 0, 100)
 	pct := quotaColor(left, fmt.Sprintf("%5.1f%% left", left))
-	base := fmt.Sprintf("  weekly  %s  %s", quotaColor(left, bar(u.UsedPercent, 22)), pct)
+	base := fmt.Sprintf("  weekly  %s  %s", quotaBar(left, 22), pct)
 	if looksLikeUnstartedWindow(u, time.Now()) {
 		return base + "   " + dim("not started")
 	}
-	return base + "   resets " + resetText(u.ResetsAt, time.Now())
+	return base + "   " + dim("resets "+resetText(u.ResetsAt, time.Now()))
 }
 
 func bankedExpiryText(raw string, now time.Time) string {
@@ -207,7 +212,7 @@ func bankedResetLines(r UsageResult, indent string) []string {
 		return []string{indent + yellow("banked resets unavailable") + " · " + dim(r.BankedErr)}
 	}
 	if len(r.BankedResets) == 0 {
-		return []string{indent + dim("banked resets  0")}
+		return nil
 	}
 	lines := []string{indent + fmt.Sprintf("banked resets  %d", len(r.BankedResets))}
 	now := time.Now()
@@ -216,7 +221,7 @@ func bankedResetLines(r UsageResult, indent string) []string {
 		if label == "" {
 			label = fmt.Sprintf("reset %d", i+1)
 		}
-		lines = append(lines, indent+"  "+label+" · "+bankedExpiryText(reset.ExpiresAt, now))
+		lines = append(lines, indent+"  "+label+" · "+dim(bankedExpiryText(reset.ExpiresAt, now)))
 	}
 	return lines
 }
