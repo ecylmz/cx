@@ -1,6 +1,7 @@
 package cx
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -16,7 +17,11 @@ import (
 	"time"
 )
 
-const githubRepo = "ecylmz/cx"
+const (
+	githubRepo       = "ecylmz/cx"
+	maxReleaseAsset  = int64(128 << 20)
+	progressBarWidth = 22
+)
 
 var githubAPIBase = "https://api.github.com"
 var githubHTTPClient = &http.Client{Timeout: 40 * time.Second}
@@ -27,6 +32,118 @@ type githubRelease struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"assets"`
+}
+
+type updateDisplay struct {
+	out         io.Writer
+	interactive bool
+}
+
+type assetProgress func(downloaded, total int64, elapsed time.Duration, done bool)
+
+func newUpdateDisplay() updateDisplay {
+	st, _ := os.Stdout.Stat()
+	return updateDisplay{
+		out:         os.Stdout,
+		interactive: st != nil && (st.Mode()&os.ModeCharDevice) != 0,
+	}
+}
+
+func (d updateDisplay) withSpinner(label string, fn func() error) error {
+	if !d.interactive {
+		return fn()
+	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		i := 0
+		for {
+			fmt.Fprintf(d.out, "\r\x1b[2K%s %s", dim(frames[i%len(frames)]), label)
+			i++
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	err := fn()
+	close(done)
+	<-stopped
+	fmt.Fprint(d.out, "\r\x1b[2K")
+	return err
+}
+
+func (d updateDisplay) success(message string) {
+	fmt.Fprintf(d.out, "%s %s\n", green("✓"), message)
+}
+
+func (d updateDisplay) downloadAsset(ctx context.Context, token string, assetID int64, name string) ([]byte, error) {
+	if !d.interactive {
+		return downloadReleaseAsset(ctx, token, assetID)
+	}
+	fmt.Fprintf(d.out, "%s downloading %s\n", cyan("↓"), name)
+	lastDraw := time.Time{}
+	payload, err := downloadReleaseAssetWithProgress(ctx, token, assetID, func(downloaded, total int64, elapsed time.Duration, done bool) {
+		now := time.Now()
+		if !done && !lastDraw.IsZero() && now.Sub(lastDraw) < 80*time.Millisecond {
+			return
+		}
+		lastDraw = now
+		fmt.Fprintf(d.out, "\r\x1b[2K%s", downloadProgressLine(downloaded, total, elapsed))
+	})
+	if err != nil {
+		fmt.Fprint(d.out, "\r\x1b[2K")
+		return nil, err
+	}
+	fmt.Fprintln(d.out)
+	return payload, nil
+}
+
+func downloadProgressLine(downloaded, total int64, elapsed time.Duration) string {
+	speed := float64(0)
+	if elapsed > 0 {
+		speed = float64(downloaded) / elapsed.Seconds()
+	}
+	if total <= 0 {
+		return fmt.Sprintf("  %s downloaded  %s/s", formatBytes(downloaded), formatBytes(int64(speed)))
+	}
+	fraction := float64(downloaded) / float64(total)
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	filled := int(fraction*progressBarWidth + 0.5)
+	bar := cyan(strings.Repeat("█", filled)) + dim(strings.Repeat("░", progressBarWidth-filled))
+	pct := int(fraction*100 + 0.5)
+	return fmt.Sprintf("  %s  %3d%%  %s / %s  %s/s", bar, pct, formatBytes(downloaded), formatBytes(total), formatBytes(int64(speed)))
+}
+
+func formatBytes(n int64) string {
+	if n < 0 {
+		n = 0
+	}
+	const (
+		kib = int64(1 << 10)
+		mib = int64(1 << 20)
+		gib = int64(1 << 30)
+	)
+	switch {
+	case n >= gib:
+		return fmt.Sprintf("%.1f GiB", float64(n)/float64(gib))
+	case n >= mib:
+		return fmt.Sprintf("%.1f MiB", float64(n)/float64(mib))
+	case n >= kib:
+		return fmt.Sprintf("%.1f KiB", float64(n)/float64(kib))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 func handleUpdate(args []string) error {
@@ -41,17 +158,27 @@ func handleUpdate(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	display := newUpdateDisplay()
 	token := githubToken()
-	rel, err := fetchLatestRelease(ctx, token)
-	if err != nil {
+
+	var rel githubRelease
+	if err := display.withSpinner("checking latest release", func() error {
+		var err error
+		rel, err = fetchLatestRelease(ctx, token)
+		return err
+	}); err != nil {
 		return err
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
 	current := strings.TrimPrefix(Version, "v")
 	if !force && current != "" && current != "dev" && latest == current {
-		fmt.Printf("%s cx %s is already current\n", green("✓"), current)
+		display.success(fmt.Sprintf("cx %s is already current", current))
 		return nil
 	}
+	if display.interactive {
+		display.success("latest release " + latest)
+	}
+
 	assetName, err := platformAsset(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return err
@@ -71,32 +198,44 @@ func handleUpdate(args []string) error {
 	if sumsID == 0 {
 		return fmt.Errorf("release %s does not contain SHA256SUMS", rel.TagName)
 	}
-	payload, err := downloadReleaseAsset(ctx, token, assetID)
+
+	payload, err := display.downloadAsset(ctx, token, assetID, assetName)
 	if err != nil {
 		return err
 	}
 	if len(payload) < 1024 {
 		return errors.New("downloaded release asset is unexpectedly small")
 	}
-	sums, err := downloadReleaseAsset(ctx, token, sumsID)
-	if err != nil {
-		return fmt.Errorf("download SHA256SUMS: %w", err)
-	}
-	if err := verifySHA256(assetName, payload, sums); err != nil {
+
+	var sums []byte
+	if err := display.withSpinner("verifying checksum", func() error {
+		var err error
+		sums, err = downloadReleaseAsset(ctx, token, sumsID)
+		if err != nil {
+			return fmt.Errorf("download SHA256SUMS: %w", err)
+		}
+		return verifySHA256(assetName, payload, sums)
+	}); err != nil {
 		return err
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve current executable: %w", err)
+	if display.interactive {
+		display.success("checksum verified")
 	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return fmt.Errorf("resolve executable symlink: %w", err)
-	}
-	if err := atomicReplaceExecutable(exe, payload); err != nil {
+
+	if err := display.withSpinner("installing update", func() error {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve current executable: %w", err)
+		}
+		exe, err = filepath.EvalSymlinks(exe)
+		if err != nil {
+			return fmt.Errorf("resolve executable symlink: %w", err)
+		}
+		return atomicReplaceExecutable(exe, payload)
+	}); err != nil {
 		return err
 	}
-	fmt.Printf("%s updated cx %s → %s\n", green("✓"), current, latest)
+	display.success(fmt.Sprintf("updated cx %s → %s", current, latest))
 	return nil
 }
 
@@ -155,18 +294,71 @@ func fetchLatestRelease(ctx context.Context, token string) (githubRelease, error
 }
 
 func downloadReleaseAsset(ctx context.Context, token string, assetID int64) ([]byte, error) {
+	return downloadReleaseAssetWithProgress(ctx, token, assetID, nil)
+}
+
+func downloadReleaseAssetWithProgress(ctx context.Context, token string, assetID int64, progress assetProgress) ([]byte, error) {
 	url := fmt.Sprintf("%s/repos/%s/releases/assets/%d", githubAPIBase, githubRepo, assetID)
-	body, status, err := githubGET(ctx, url, token, "application/octet-stream")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if status == http.StatusNotFound {
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "cx/"+Version)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := githubHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, errors.New("release asset not found")
 	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("GitHub release download failed: HTTP %d", status)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		msg := strings.TrimSpace(string(body))
+		if msg != "" {
+			return nil, fmt.Errorf("GitHub release download failed: HTTP %d: %s", resp.StatusCode, msg)
+		}
+		return nil, fmt.Errorf("GitHub release download failed: HTTP %d", resp.StatusCode)
 	}
-	return body, nil
+	if resp.ContentLength > maxReleaseAsset {
+		return nil, fmt.Errorf("release asset is too large: %s", formatBytes(resp.ContentLength))
+	}
+
+	var buf bytes.Buffer
+	if resp.ContentLength > 0 {
+		buf.Grow(int(resp.ContentLength))
+	}
+	chunk := make([]byte, 64<<10)
+	var downloaded int64
+	started := time.Now()
+	for {
+		n, readErr := resp.Body.Read(chunk)
+		if n > 0 {
+			downloaded += int64(n)
+			if downloaded > maxReleaseAsset {
+				return nil, fmt.Errorf("release asset exceeds %s", formatBytes(maxReleaseAsset))
+			}
+			_, _ = buf.Write(chunk[:n])
+			if progress != nil {
+				progress(downloaded, resp.ContentLength, time.Since(started), false)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+	if progress != nil {
+		progress(downloaded, resp.ContentLength, time.Since(started), true)
+	}
+	return buf.Bytes(), nil
 }
 
 func githubGET(ctx context.Context, url, token, accept string) ([]byte, int, error) {
@@ -185,7 +377,7 @@ func githubGET(ctx context.Context, url, token, accept string) ([]byte, int, err
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 128<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReleaseAsset))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
