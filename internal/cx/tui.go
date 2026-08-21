@@ -75,7 +75,7 @@ func drawCachedDashboard(p paths, accounts []Account, sel int) {
 		}
 	}
 	drawDashboard(p, accounts, results, sel)
-	fmt.Println(dim(" refreshing live quotas…"))
+	fmt.Println(dim(" refreshing live quotas and banked resets…"))
 }
 
 func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) (int, string, error) {
@@ -148,10 +148,13 @@ func drawDashboard(p paths, accounts []Account, results []UsageResult, sel int) 
 		} else {
 			fmt.Printf("   %s %s\n", red("unavailable"), r.Err)
 		}
+		for _, line := range bankedResetLines(r, "   ") {
+			fmt.Println(line)
+		}
 		fmt.Println()
 	}
 	fmt.Println(dim(" ↑/↓ or j/k select   enter switch   r refresh   q quit"))
-	fmt.Println(dim(" live quota read on every refresh"))
+	fmt.Println(dim(" live quota + banked resets read on every refresh"))
 }
 
 func pickAccount(p paths) (Account, error) {
