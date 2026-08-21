@@ -22,11 +22,14 @@ const (
 )
 
 type UsageResult struct {
-	Account  Account
-	Usage    WeeklyUsage
-	Err      string
-	PrimeErr string
-	Primed   bool
+	Account      Account
+	Usage        WeeklyUsage
+	Err          string
+	PrimeErr     string
+	Primed       bool
+	BankedResets []BankedReset
+	BankedErr    string
+	BankedLoaded bool
 }
 
 type rpcEnvelope struct {
@@ -62,11 +65,40 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			u, err := fetchUsage(p, a)
-			out[i] = UsageResult{Account: a, Usage: u}
-			if err != nil {
-				out[i].Err = err.Error()
+
+			var u WeeklyUsage
+			var usageErr error
+			var banked []BankedReset
+			var bankedErr error
+			var reads sync.WaitGroup
+			reads.Add(2)
+			go func() {
+				defer reads.Done()
+				u, usageErr = fetchUsage(p, a)
+			}()
+			go func() {
+				defer reads.Done()
+				banked, bankedErr = fetchBankedResetsDirect(p, a)
+			}()
+			reads.Wait()
+
+			if bankedErr != nil && usageErr == nil {
+				if retry, err := fetchBankedResetsDirect(p, a); err == nil {
+					banked = retry
+					bankedErr = nil
+				} else {
+					bankedErr = err
+				}
 			}
+
+			r := UsageResult{Account: a, Usage: u, BankedResets: banked, BankedLoaded: true}
+			if usageErr != nil {
+				r.Err = usageErr.Error()
+			}
+			if bankedErr != nil {
+				r.BankedErr = bankedErr.Error()
+			}
+			out[i] = r
 		}(i, a)
 	}
 	wg.Wait()
