@@ -2,6 +2,7 @@ package cx
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPlatformAsset(t *testing.T) {
@@ -172,5 +174,68 @@ func TestHandleUpdateRejectsArgsAndStopsWhenCurrent(t *testing.T) {
 	})
 	if !strings.Contains(out, "already current") {
 		t.Fatalf("out=%q", out)
+	}
+}
+
+func TestFormatBytesAndProgressLine(t *testing.T) {
+	oldColor := useColor
+	defer func() { useColor = oldColor }()
+	useColor = false
+	if got := formatBytes(1536); got != "1.5 KiB" {
+		t.Fatalf("formatBytes=%q", got)
+	}
+	if got := formatBytes(3 << 20); got != "3.0 MiB" {
+		t.Fatalf("formatBytes=%q", got)
+	}
+	line := downloadProgressLine(1<<20, 2<<20, time.Second)
+	for _, want := range []string{"50%", "1.0 MiB / 2.0 MiB", "1.0 MiB/s"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("progress line missing %q: %q", want, line)
+		}
+	}
+	unknown := downloadProgressLine(2048, -1, time.Second)
+	if !strings.Contains(unknown, "2.0 KiB downloaded") {
+		t.Fatalf("unknown progress=%q", unknown)
+	}
+}
+
+func TestDownloadReleaseAssetProgressReportsContentLength(t *testing.T) {
+	oldBase := githubAPIBase
+	oldClient := githubHTTPClient
+	defer func() { githubAPIBase = oldBase; githubHTTPClient = oldClient }()
+
+	payload := strings.Repeat("x", 8192)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer srv.Close()
+	githubAPIBase = srv.URL
+	githubHTTPClient = srv.Client()
+
+	var gotDownloaded, gotTotal int64
+	var gotDone bool
+	b, err := downloadReleaseAssetWithProgress(context.Background(), "", 7, func(downloaded, total int64, elapsed time.Duration, done bool) {
+		gotDownloaded, gotTotal, gotDone = downloaded, total, done
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != payload {
+		t.Fatal("payload mismatch")
+	}
+	if gotDownloaded != int64(len(payload)) || gotTotal != int64(len(payload)) || !gotDone {
+		t.Fatalf("progress downloaded=%d total=%d done=%v", gotDownloaded, gotTotal, gotDone)
+	}
+}
+
+func TestUpdateDisplayNonInteractiveStaysQuiet(t *testing.T) {
+	var out strings.Builder
+	d := updateDisplay{out: &out, interactive: false}
+	if err := d.withSpinner("checking", func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("non-interactive spinner wrote %q", out.String())
 	}
 }
