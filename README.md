@@ -4,6 +4,8 @@ A small Codex account switcher for macOS and Ubuntu.
 
 `cx` keeps your normal Codex sessions and project state intact while letting you add multiple ChatGPT accounts, switch between them, and see each account's live weekly quota, reset time, and available banked resets.
 
+![cx status](assets/cx-status.svg)
+
 ## Install
 
 Requires the Codex CLI.
