@@ -183,6 +183,44 @@ func usageLine(u WeeklyUsage) string {
 	return base + "   resets " + resetText(u.ResetsAt, time.Now())
 }
 
+func bankedExpiryText(raw string, now time.Time) string {
+	if strings.TrimSpace(raw) == "" {
+		return "expires unknown"
+	}
+	t, ok := bankedExpiry(raw)
+	if !ok {
+		return "expires " + raw
+	}
+	exact := t.Local().Format(localDateLayout(localeName()))
+	d := t.Sub(now)
+	if d > 0 {
+		return "expires " + exact + " · in " + relativeDuration(d)
+	}
+	return "expired " + exact + " · " + shortDuration(-d) + " ago"
+}
+
+func bankedResetLines(r UsageResult, indent string) []string {
+	if !r.BankedLoaded {
+		return nil
+	}
+	if r.BankedErr != "" {
+		return []string{indent + yellow("banked resets unavailable") + " · " + dim(r.BankedErr)}
+	}
+	if len(r.BankedResets) == 0 {
+		return []string{indent + dim("banked resets  0")}
+	}
+	lines := []string{indent + fmt.Sprintf("banked resets  %d", len(r.BankedResets))}
+	now := time.Now()
+	for i, reset := range r.BankedResets {
+		label := strings.TrimSpace(reset.Title)
+		if label == "" {
+			label = fmt.Sprintf("reset %d", i+1)
+		}
+		lines = append(lines, indent+"  "+label+" · "+bankedExpiryText(reset.ExpiresAt, now))
+	}
+	return lines
+}
+
 func printStatus(p paths, accounts []Account, results []UsageResult) {
 	st, _ := loadState(p)
 	fmt.Println(bold("cx status"))
@@ -217,6 +255,9 @@ func printStatus(p paths, accounts []Account, results []UsageResult) {
 		} else {
 			fmt.Printf("  %s %s\n", red("unavailable"), r.Err)
 		}
+		for _, line := range bankedResetLines(r, "  ") {
+			fmt.Println(line)
+		}
 		if i < len(results)-1 {
 			fmt.Println()
 		}
@@ -224,11 +265,13 @@ func printStatus(p paths, accounts []Account, results []UsageResult) {
 }
 
 type jsonAccountStatus struct {
-	Name   string      `json:"name"`
-	Email  string      `json:"email,omitempty"`
-	Plan   string      `json:"plan,omitempty"`
-	Active bool        `json:"active"`
-	Weekly WeeklyUsage `json:"weekly"`
+	Name             string        `json:"name"`
+	Email            string        `json:"email,omitempty"`
+	Plan             string        `json:"plan,omitempty"`
+	Active           bool          `json:"active"`
+	Weekly           WeeklyUsage   `json:"weekly"`
+	BankedResets     []BankedReset `json:"banked_resets"`
+	BankedResetError string        `json:"banked_reset_error,omitempty"`
 }
 
 func statusJSON(p paths, accounts []Account, results []UsageResult) any {
@@ -241,7 +284,19 @@ func statusJSON(p paths, accounts []Account, results []UsageResult) any {
 		} else if r.PrimeErr != "" {
 			u.Err = r.PrimeErr
 		}
-		out = append(out, jsonAccountStatus{Name: r.Account.Name, Email: r.Account.Email, Plan: r.Account.Plan, Active: r.Account.ID == st.ActiveID, Weekly: u})
+		banked := r.BankedResets
+		if banked == nil && r.BankedLoaded {
+			banked = []BankedReset{}
+		}
+		out = append(out, jsonAccountStatus{
+			Name:             r.Account.Name,
+			Email:            r.Account.Email,
+			Plan:             r.Account.Plan,
+			Active:           r.Account.ID == st.ActiveID,
+			Weekly:           u,
+			BankedResets:     banked,
+			BankedResetError: r.BankedErr,
+		})
 	}
 	return map[string]any{"version": Version, "accounts": out}
 }
