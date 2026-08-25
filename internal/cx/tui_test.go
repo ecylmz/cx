@@ -75,7 +75,7 @@ func TestDrawDashboard(t *testing.T) {
 	}
 	r := UsageResult{Account: Account{ID: "a", Name: "primary", Plan: "plus"}, Usage: WeeklyUsage{UsedPercent: 5, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}, Primed: true}
 	out := captureStdout(t, func() { drawDashboard(p, []Account{r.Account}, []UsageResult{r}, 0) })
-	for _, want := range []string{"cx", "primary", "weekly window started just now", "enter switch"} {
+	for _, want := range []string{"cx", "primary", "quota windows started just now", "enter switch"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dashboard missing %q: %q", want, out)
 		}

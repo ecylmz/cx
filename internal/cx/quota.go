@@ -172,10 +172,6 @@ func annotateTransientWindowState(u *WeeklyUsage) {
 func annotateWindowState(p paths, r *UsageResult) {
 	now := time.Now()
 	u := &r.Usage
-	if u.WindowMinutes <= 0 {
-		u.WindowStarted = true
-		return
-	}
 	if u.UsedPercent > 0 {
 		u.WindowStarted = true
 		if u.ResetsAt > 0 {
@@ -183,6 +179,10 @@ func annotateWindowState(p paths, r *UsageResult) {
 				r.Account = a
 			}
 		}
+		return
+	}
+	if u.WindowMinutes <= 0 {
+		u.WindowStarted = true
 		return
 	}
 	if r.Account.WeeklyResetAt > now.Unix() && u.ResetsAt > 0 {

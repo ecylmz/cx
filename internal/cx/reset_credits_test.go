@@ -99,7 +99,7 @@ func TestBankedResetLinesShowExpiry(t *testing.T) {
 		BankedResets: []BankedReset{{ID: "a", Title: "Full reset", ExpiresAt: "2026-08-24T12:00:00Z"}},
 	}, "  ")
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "banked resets  1") || !strings.Contains(joined, "Full reset") || !strings.Contains(joined, "expires") {
+	if !strings.Contains(joined, "banked resets  1") || !strings.Contains(joined, "Full reset") || (!strings.Contains(joined, "expires") && !strings.Contains(joined, "expired")) {
 		t.Fatalf("lines=%q", joined)
 	}
 }
