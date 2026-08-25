@@ -179,13 +179,32 @@ func looksLikeUnstartedWindow(u WeeklyUsage, now time.Time) bool {
 }
 
 func usageLine(u WeeklyUsage) string {
+	return labeledUsageLine("weekly", u)
+}
+
+func fiveHourUsageLine(u WeeklyUsage) string {
+	return labeledUsageLine("5 hour", u)
+}
+
+func labeledUsageLine(label string, u WeeklyUsage) string {
 	left := clamp(100-u.UsedPercent, 0, 100)
 	pct := quotaColor(left, fmt.Sprintf("%5.1f%% left", left))
-	base := fmt.Sprintf("  weekly  %s  %s", quotaBar(left, 22), pct)
+	base := fmt.Sprintf("  %-6s  %s  %s", label, quotaBar(left, 22), pct)
 	if looksLikeUnstartedWindow(u, time.Now()) {
 		return base + "   " + dim("not started")
 	}
 	return base + "   " + dim("resets "+resetText(u.ResetsAt, time.Now()))
+}
+
+func usageLines(r UsageResult) []string {
+	lines := make([]string, 0, 2)
+	if r.FiveHour != nil && r.FiveHour.WindowMinutes > 0 {
+		lines = append(lines, fiveHourUsageLine(*r.FiveHour))
+	}
+	if r.Usage.WindowMinutes > 0 || !r.Usage.FetchedAt.IsZero() {
+		lines = append(lines, usageLine(r.Usage))
+	}
+	return lines
 }
 
 func bankedExpiryText(raw string, now time.Time) string {
@@ -246,16 +265,20 @@ func printStatus(p paths, accounts []Account, results []UsageResult) {
 		}
 		fmt.Println()
 		if r.Err == "" {
-			fmt.Println(usageLine(r.Usage))
+			for _, line := range usageLines(r) {
+				fmt.Println(line)
+			}
 			if r.PrimeErr != "" {
 				fmt.Printf("  %s · %s\n", red("window start failed"), r.PrimeErr)
 			} else if r.Primed {
-				fmt.Println(dim("  live · weekly window started just now"))
+				fmt.Println(dim("  live · quota windows started just now"))
 			} else {
 				fmt.Println(dim("  live · updated just now"))
 			}
 		} else if !r.Usage.FetchedAt.IsZero() {
-			fmt.Println(usageLine(r.Usage))
+			for _, line := range usageLines(r) {
+				fmt.Println(line)
+			}
 			fmt.Printf("  %s cached %s ago · %s\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)), r.Err)
 		} else {
 			fmt.Printf("  %s %s\n", red("unavailable"), r.Err)
@@ -274,6 +297,7 @@ type jsonAccountStatus struct {
 	Email            string        `json:"email,omitempty"`
 	Plan             string        `json:"plan,omitempty"`
 	Active           bool          `json:"active"`
+	FiveHour         *WeeklyUsage  `json:"five_hour,omitempty"`
 	Weekly           WeeklyUsage   `json:"weekly"`
 	BankedResets     []BankedReset `json:"banked_resets"`
 	BankedResetError string        `json:"banked_reset_error,omitempty"`
@@ -283,11 +307,11 @@ func statusJSON(p paths, accounts []Account, results []UsageResult) any {
 	st, _ := loadState(p)
 	out := make([]jsonAccountStatus, 0, len(results))
 	for _, r := range results {
-		u := r.Usage
+		weekly := r.Usage
 		if r.Err != "" {
-			u.Err = r.Err
+			weekly.Err = r.Err
 		} else if r.PrimeErr != "" {
-			u.Err = r.PrimeErr
+			weekly.Err = r.PrimeErr
 		}
 		banked := r.BankedResets
 		if banked == nil && r.BankedLoaded {
@@ -298,7 +322,8 @@ func statusJSON(p paths, accounts []Account, results []UsageResult) any {
 			Email:            r.Account.Email,
 			Plan:             r.Account.Plan,
 			Active:           r.Account.ID == st.ActiveID,
-			Weekly:           u,
+			FiveHour:         r.FiveHour,
+			Weekly:           weekly,
 			BankedResets:     banked,
 			BankedResetError: r.BankedErr,
 		})

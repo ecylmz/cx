@@ -39,16 +39,21 @@ type directRateWindow struct {
 }
 
 func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
+	_, weekly, err := fetchUsagePairDirect(p, a)
+	return weekly, err
+}
+
+func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
 	token, accountID, err := directUsageCredentials(p, a)
 	if err != nil {
-		return WeeklyUsage{}, err
+		return nil, WeeklyUsage{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), directUsageTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, directUsageEndpoint, nil)
 	if err != nil {
-		return WeeklyUsage{}, err
+		return nil, WeeklyUsage{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("ChatGPT-Account-Id", accountID)
@@ -58,12 +63,12 @@ func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
 
 	resp, err := directUsageHTTPClient.Do(req)
 	if err != nil {
-		return WeeklyUsage{}, fmt.Errorf("usage request: %w", err)
+		return nil, WeeklyUsage{}, fmt.Errorf("usage request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return WeeklyUsage{}, fmt.Errorf("read usage response: %w", err)
+		return nil, WeeklyUsage{}, fmt.Errorf("read usage response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := strings.TrimSpace(string(body))
@@ -71,30 +76,98 @@ func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
 			msg = msg[:240]
 		}
 		if msg != "" {
-			return WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d: %s", resp.StatusCode, msg)
+			return nil, WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d: %s", resp.StatusCode, msg)
 		}
-		return WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode)
+		return nil, WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	var payload directUsagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return WeeklyUsage{}, fmt.Errorf("decode usage response: %w", err)
+		return nil, WeeklyUsage{}, fmt.Errorf("decode usage response: %w", err)
 	}
-	window, err := selectDirectWeeklyWindow(payload)
+	fiveHourWindow, weeklyWindow, err := selectDirectCodexWindows(payload)
 	if err != nil {
-		return WeeklyUsage{}, err
+		return nil, WeeklyUsage{}, err
+	}
+
+	fetchedAt := time.Now()
+	weekly := directWindowUsage(weeklyWindow, fetchedAt)
+	var fiveHour *WeeklyUsage
+	if fiveHourWindow != nil {
+		u := directWindowUsage(fiveHourWindow, fetchedAt)
+		fiveHour = &u
+	}
+	return fiveHour, weekly, nil
+}
+
+func directWindowUsage(w *directRateWindow, fetchedAt time.Time) WeeklyUsage {
+	if w == nil {
+		return WeeklyUsage{}
 	}
 	mins := int64(0)
-	if window.LimitWindowSeconds > 0 {
-		mins = (window.LimitWindowSeconds + 59) / 60
+	if w.LimitWindowSeconds > 0 {
+		mins = (w.LimitWindowSeconds + 59) / 60
 	}
 	return WeeklyUsage{
-		UsedPercent:   window.UsedPercent,
+		UsedPercent:   w.UsedPercent,
 		WindowMinutes: mins,
-		ResetsAt:      window.ResetAt,
-		FetchedAt:     time.Now(),
+		ResetsAt:      w.ResetAt,
+		FetchedAt:     fetchedAt,
 		Fresh:         true,
-	}, nil
+	}
+}
+
+func selectDirectCodexWindows(payload directUsagePayload) (*directRateWindow, *directRateWindow, error) {
+	if payload.RateLimit == nil {
+		return nil, nil, errors.New("usage endpoint returned no Codex rate-limit window")
+	}
+	windows := make([]*directRateWindow, 0, 2)
+	if payload.RateLimit.PrimaryWindow != nil {
+		windows = append(windows, payload.RateLimit.PrimaryWindow)
+	}
+	if payload.RateLimit.SecondaryWindow != nil {
+		windows = append(windows, payload.RateLimit.SecondaryWindow)
+	}
+	if len(windows) == 0 {
+		return nil, nil, errors.New("usage endpoint returned no Codex rate-limit window")
+	}
+
+	var fiveHour, weekly *directRateWindow
+	for _, w := range windows {
+		switch w.LimitWindowSeconds {
+		case 5 * 60 * 60:
+			fiveHour = w
+		case 7 * 24 * 60 * 60:
+			weekly = w
+		}
+	}
+
+	if weekly == nil {
+		weekly = windows[0]
+		for _, w := range windows[1:] {
+			if w.LimitWindowSeconds > weekly.LimitWindowSeconds {
+				weekly = w
+			}
+		}
+		if weekly.LimitWindowSeconds < 24*60*60 {
+			weekly = nil
+		}
+	}
+	if fiveHour == nil && len(windows) > 1 {
+		candidate := windows[0]
+		for _, w := range windows[1:] {
+			if w.LimitWindowSeconds < candidate.LimitWindowSeconds {
+				candidate = w
+			}
+		}
+		if candidate != weekly {
+			fiveHour = candidate
+		}
+	} else if fiveHour == nil && len(windows) == 1 && windows[0].LimitWindowSeconds < 24*60*60 {
+		fiveHour = windows[0]
+	}
+
+	return fiveHour, weekly, nil
 }
 
 func directUsageCredentials(p paths, a Account) (string, string, error) {

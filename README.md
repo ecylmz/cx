@@ -2,7 +2,7 @@
 
 A small Codex account switcher for macOS and Ubuntu.
 
-`cx` keeps your normal Codex sessions and project state intact while letting you add multiple ChatGPT accounts, switch between them, and see each account's live weekly quota, reset time, and available banked resets.
+`cx` keeps your normal Codex sessions and project state intact while letting you add multiple ChatGPT accounts, switch between them, and see each account's live 5-hour and weekly quotas, reset times, and available banked resets.
 
 ![cx status](assets/cx-status.svg)
 
@@ -24,7 +24,7 @@ cx add backup
 cx
 ```
 
-The dashboard shows the active account, weekly quota remaining, the full local reset date/time, and every available banked reset with its expiration time. It draws cached quota values immediately while refreshing live quota and banked-reset data in parallel. If a new account's weekly window has not started yet, `cx` sends one minimal ephemeral Codex request to start it.
+The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. It draws cached weekly quota values immediately while refreshing live quota and banked-reset data in parallel. If an account's weekly rolling window has not started yet, `cx` sends one minimal ephemeral Codex request to start it; when the 5-hour window is present, that same turn naturally starts it too. `cx` does not send a priming request merely because an otherwise-unused 5-hour window is not started.
 
 ```sh
 cx                    # dashboard

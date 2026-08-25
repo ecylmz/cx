@@ -57,7 +57,7 @@ func runDashboard(p paths) error {
 		applyCachedUsageFallback(p, results)
 		saveFreshCache(p, results)
 
-		layout := drawDashboardFrame(p, accounts, results, sel, "live quota · live banked resets")
+		layout := drawDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
 		idx, action, err := dashboardInputLoop(p, accounts, sel, layout)
 		if err != nil {
 			return err
@@ -109,7 +109,7 @@ func drawCachedDashboard(p paths, accounts []Account, sel int) {
 			results[i].Err = "refreshing live quota"
 		}
 	}
-	frame, _ := renderDashboardFrame(p, accounts, results, sel, "refreshing live quota + banked resets…")
+	frame, _ := renderDashboardFrame(p, accounts, results, sel, "refreshing live 5-hour + weekly quota + banked resets…")
 	writeFullFrame(frame)
 }
 
@@ -123,7 +123,7 @@ func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) 
 		return sel, "", err
 	}
 	defer endTerminalSession(old)
-	layout := drawDashboardFrame(p, accounts, results, sel, "live quota · live banked resets")
+	layout := drawDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
 	return dashboardInputLoop(p, accounts, sel, layout)
 }
 
@@ -157,7 +157,7 @@ func dashboardInputLoop(p paths, accounts []Account, sel int, layout dashboardLa
 }
 
 func drawDashboard(p paths, accounts []Account, results []UsageResult, sel int) {
-	frame, _ := renderDashboardFrame(p, accounts, results, sel, "live quota · live banked resets")
+	frame, _ := renderDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
 	fmt.Print(clearScreenHome)
 	fmt.Print(frame)
 }
@@ -182,19 +182,25 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 		b.WriteByte('\n')
 		row++
 		if r.Err == "" {
-			b.WriteString("   " + usageLine(r.Usage)[2:] + "\n")
-			row++
+			lines := usageLines(r)
+			for _, line := range lines {
+				b.WriteString("   " + line[2:] + "\n")
+			}
+			row += len(lines)
 			if r.PrimeErr != "" {
 				fmt.Fprintf(&b, "   %s %s\n", red("window start failed"), r.PrimeErr)
 				row++
 			} else if r.Primed {
-				b.WriteString("   " + dim("weekly window started just now") + "\n")
+				b.WriteString("   " + dim("quota windows started just now") + "\n")
 				row++
 			}
 		} else if !r.Usage.FetchedAt.IsZero() {
-			b.WriteString("   " + usageLine(r.Usage)[2:] + "\n")
+			lines := usageLines(r)
+			for _, line := range lines {
+				b.WriteString("   " + line[2:] + "\n")
+			}
 			fmt.Fprintf(&b, "   %s · cached %s ago\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)))
-			row += 2
+			row += len(lines) + 1
 		} else {
 			fmt.Fprintf(&b, "   %s %s\n", red("unavailable"), r.Err)
 			row++
