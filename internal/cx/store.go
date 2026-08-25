@@ -14,15 +14,16 @@ import (
 )
 
 type Account struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	AccountID     string     `json:"account_id"`
-	Email         string     `json:"email,omitempty"`
-	Plan          string     `json:"plan,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-	WeeklyResetAt int64      `json:"weekly_reset_at,omitempty"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	AccountID       string     `json:"account_id"`
+	Email           string     `json:"email,omitempty"`
+	Plan            string     `json:"plan,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
+	FiveHourResetAt int64      `json:"five_hour_reset_at,omitempty"`
+	WeeklyResetAt   int64      `json:"weekly_reset_at,omitempty"`
 }
 
 type State struct {

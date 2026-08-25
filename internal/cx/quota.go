@@ -118,7 +118,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	for i := range results {
 		if results[i].Err == "" {
 			annotateWindowState(p, &results[i])
-			annotateTransientWindowState(results[i].FiveHour)
+			annotateFiveHourWindowState(p, &results[i])
 		}
 	}
 
@@ -143,30 +143,87 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 				return
 			}
 			weekly.WindowStarted = true
-			annotateTransientWindowState(fiveHour)
+			if fiveHour != nil {
+				fiveHour.WindowStarted = true
+			}
 			results[i].Usage = weekly
 			results[i].FiveHour = fiveHour
 			results[i].Primed = true
+
+			account := results[i].Account
 			if weekly.ResetsAt > 0 {
-				if a, err := rememberWeeklyReset(p, results[i].Account, weekly.ResetsAt); err == nil {
-					results[i].Account = a
+				if updated, err := rememberWeeklyReset(p, account, weekly.ResetsAt); err == nil {
+					account = updated
 				}
 			}
+			if fiveHour != nil && fiveHour.ResetsAt > 0 {
+				if updated, err := rememberFiveHourReset(p, account, fiveHour.ResetsAt); err == nil {
+					account = updated
+				}
+			}
+			results[i].Account = account
 		}(i)
 	}
 	wg.Wait()
 	return results
 }
 
-func annotateTransientWindowState(u *WeeklyUsage) {
+func annotateFiveHourWindowState(p paths, r *UsageResult) {
+	u := r.FiveHour
 	if u == nil {
 		return
 	}
+	now := time.Now()
 	if u.UsedPercent > 0 {
+		u.WindowStarted = true
+		if u.ResetsAt > 0 {
+			if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+				r.Account = a
+			}
+		}
+		return
+	}
+	if u.WindowMinutes <= 0 {
 		u.WindowStarted = true
 		return
 	}
-	u.WindowStarted = !looksLikeUnstartedWindow(*u, time.Now())
+	if resetMatchesKnown(r.Account.FiveHourResetAt, u.ResetsAt, now) {
+		u.WindowStarted = true
+		return
+	}
+	if fiveHourMatchesWeeklyStart(r.Account, r.Usage, *u, now) {
+		u.WindowStarted = true
+		if u.ResetsAt > 0 {
+			if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+				r.Account = a
+			}
+		}
+		return
+	}
+	u.WindowStarted = !looksLikeUnstartedWindow(*u, now)
+	if u.WindowStarted && u.ResetsAt > 0 {
+		if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+			r.Account = a
+		}
+	}
+}
+
+func fiveHourMatchesWeeklyStart(a Account, weekly WeeklyUsage, fiveHour WeeklyUsage, now time.Time) bool {
+	weeklyReset := a.WeeklyResetAt
+	if weeklyReset <= now.Unix() || fiveHour.ResetsAt <= 0 || fiveHour.WindowMinutes <= 0 {
+		return false
+	}
+	weeklyMinutes := weekly.WindowMinutes
+	if weeklyMinutes <= 0 {
+		weeklyMinutes = 7 * 24 * 60
+	}
+	weeklyStart := time.Unix(weeklyReset, 0).Add(-time.Duration(weeklyMinutes) * time.Minute)
+	fiveHourStart := time.Unix(fiveHour.ResetsAt, 0).Add(-time.Duration(fiveHour.WindowMinutes) * time.Minute)
+	delta := weeklyStart.Sub(fiveHourStart)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= 2*time.Minute
 }
 
 func annotateWindowState(p paths, r *UsageResult) {
@@ -185,15 +242,9 @@ func annotateWindowState(p paths, r *UsageResult) {
 		u.WindowStarted = true
 		return
 	}
-	if r.Account.WeeklyResetAt > now.Unix() && u.ResetsAt > 0 {
-		delta := r.Account.WeeklyResetAt - u.ResetsAt
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta <= 120 {
-			u.WindowStarted = true
-			return
-		}
+	if resetMatchesKnown(r.Account.WeeklyResetAt, u.ResetsAt, now) {
+		u.WindowStarted = true
+		return
 	}
 	u.WindowStarted = !looksLikeUnstartedWindow(*u, now)
 	if u.WindowStarted && u.ResetsAt > 0 {
@@ -203,11 +254,34 @@ func annotateWindowState(p paths, r *UsageResult) {
 	}
 }
 
+func resetMatchesKnown(knownReset, currentReset int64, now time.Time) bool {
+	if knownReset <= now.Unix() || currentReset <= 0 {
+		return false
+	}
+	delta := knownReset - currentReset
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= 120
+}
+
 func rememberWeeklyReset(p paths, a Account, resetAt int64) (Account, error) {
 	if resetAt <= 0 || a.WeeklyResetAt == resetAt {
 		return a, nil
 	}
 	a.WeeklyResetAt = resetAt
+	a.UpdatedAt = time.Now()
+	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+func rememberFiveHourReset(p paths, a Account, resetAt int64) (Account, error) {
+	if resetAt <= 0 || a.FiveHourResetAt == resetAt {
+		return a, nil
+	}
+	a.FiveHourResetAt = resetAt
 	a.UpdatedAt = time.Now()
 	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
 		return a, err
