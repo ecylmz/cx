@@ -44,9 +44,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate installer
         run: sh -n install.sh
-      - name: Omarchy/Arch source install smoke test
+      - name: Omarchy/Arch installer smoke test
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p /usr/share/omarchy/default/bash
+          cat > /usr/share/omarchy/default/bash/aliases <<'EOF'
+          alias cx='printf "\\033[2J\\033[3J\\033[H" && claude --permission-mode auto'
+          EOF
+          cat > "$HOME/.bashrc" <<'EOF'
+          source /usr/share/omarchy/default/bash/aliases
+          EOF
+
           CX_BUILD_FROM_SOURCE=1 CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
           "$RUNNER_TEMP/bin/cx" version
+
+          test "$(grep -Fc '# >>> cx Omarchy override >>>' "$HOME/.bashrc")" -eq 1
+          grep -Fq 'unalias cx 2>/dev/null || true' "$HOME/.bashrc"
+          PATH="$RUNNER_TEMP/bin:$PATH" bash --noprofile --rcfile "$HOME/.bashrc" -ic '
+            test "$(type -t cx)" = file
+            cx version >/dev/null
+          '
+
+          CX_BUILD_FROM_SOURCE=1 CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
+          test "$(grep -Fc '# >>> cx Omarchy override >>>' "$HOME/.bashrc")" -eq 1

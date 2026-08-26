@@ -89,6 +89,46 @@ download_release() {
   install_binary "$out"
 }
 
+configure_omarchy_cx_alias() {
+  [ "$OS" = linux ] || return 0
+
+  omarchy_root=""
+  for candidate in "${OMARCHY_PATH:-}" /usr/share/omarchy "$HOME/.local/share/omarchy"; do
+    [ -n "$candidate" ] || continue
+    if [ -r "$candidate/default/bash/aliases" ]; then
+      omarchy_root=$candidate
+      break
+    fi
+  done
+  [ -n "$omarchy_root" ] || return 0
+
+  aliases_file="$omarchy_root/default/bash/aliases"
+  grep -Eq '^[[:space:]]*alias[[:space:]]+cx=' "$aliases_file" || return 0
+
+  bashrc="$HOME/.bashrc"
+  marker='# >>> cx Omarchy override >>>'
+  if [ -f "$bashrc" ] && grep -Fq "$marker" "$bashrc"; then
+    return 0
+  fi
+
+  if ! touch "$bashrc" 2>/dev/null; then
+    printf 'cx install: warning: could not update %s; Omarchy may keep its cx alias\n' "$bashrc" >&2
+    return 0
+  fi
+
+  if ! printf '\n%s\n%s\n%s\n%s\n' \
+    "$marker" \
+    '# Omarchy reserves cx for Claude Code; prefer the cx account-switcher binary.' \
+    'unalias cx 2>/dev/null || true' \
+    '# <<< cx Omarchy override <<<' >> "$bashrc"; then
+    printf 'cx install: warning: could not update %s; Omarchy may keep its cx alias\n' "$bashrc" >&2
+    return 0
+  fi
+
+  printf 'configured Omarchy cx alias override in %s\n' "$bashrc"
+  printf 'restart your shell or run: source %s\n' "$bashrc"
+}
+
 if [ "${CX_BUILD_FROM_SOURCE:-0}" = 1 ]; then
   build_source
 elif [ -f "$PREBUILT" ]; then
@@ -101,6 +141,8 @@ elif [ -f "$ROOT/go.mod" ] && command -v go >/dev/null 2>&1; then
 else
   fail "could not download the latest release"
 fi
+
+configure_omarchy_cx_alias
 
 printf 'installed %s\n' "$DEST_DIR/cx"
 "$DEST_DIR/cx" version
