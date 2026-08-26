@@ -33,3 +33,20 @@ jobs:
           set -euo pipefail
           CX_BUILD_FROM_SOURCE=1 CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
           "$RUNNER_TEMP/bin/cx" version
+
+  arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install Arch test dependencies
+        run: pacman -Sy --noconfirm git go
+      - uses: actions/checkout@v4
+      - name: Validate installer
+        run: sh -n install.sh
+      - name: Omarchy/Arch source install smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          CX_BUILD_FROM_SOURCE=1 CX_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh
+          "$RUNNER_TEMP/bin/cx" version

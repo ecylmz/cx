@@ -9,16 +9,8 @@ fail() { echo "cx install: $*" >&2; exit 1; }
 
 case "$(uname -s)" in
   Darwin) OS=darwin ;;
-  Linux)
-    OS=linux
-    if [ -r /etc/os-release ]; then
-      . /etc/os-release
-      [ "${ID:-}" = ubuntu ] || fail "supported Linux distribution: Ubuntu"
-    else
-      fail "cannot identify Linux distribution; supported: Ubuntu"
-    fi
-    ;;
-  *) fail "supported systems: macOS and Ubuntu" ;;
+  Linux) OS=linux ;;
+  *) fail "supported systems: macOS and Linux" ;;
 esac
 
 case "$(uname -m)" in

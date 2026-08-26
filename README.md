@@ -1,6 +1,6 @@
 # cx
 
-A small Codex account switcher for macOS and Ubuntu.
+A small Codex account switcher for macOS and Linux, including Omarchy/Arch and Ubuntu.
 
 `cx` keeps your normal Codex sessions and project state intact while letting you add multiple ChatGPT accounts, switch between them, and see each account's live 5-hour and weekly quotas, reset times, and available banked resets.
 
@@ -14,7 +14,9 @@ Requires the Codex CLI.
 curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
 ```
 
-The installer downloads the latest native release for Apple Silicon/Intel macOS or amd64/arm64 Ubuntu, verifies `SHA256SUMS`, and installs `cx` to `~/.local/bin`. On macOS it also fixes executable permissions and clears the quarantine attribute that can block downloaded binaries.
+The installer downloads the latest native release for Apple Silicon/Intel macOS or amd64/arm64 Linux, verifies `SHA256SUMS`, and installs `cx` to `~/.local/bin`. Linux support is distribution-independent; Omarchy/Arch and Ubuntu are tested paths. On macOS the installer also fixes executable permissions and clears the quarantine attribute that can block downloaded binaries.
+
+Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` works with that launcher directly, so no separate Codex installation path is required. The first `cx` action that invokes Codex may therefore cause Omarchy to install/initialize Codex in the normal way.
 
 ## Use
 
