@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
 
 The installer downloads the latest native release for Apple Silicon/Intel macOS or amd64/arm64 Linux, verifies `SHA256SUMS`, and installs `cx` to `~/.local/bin`. Linux support is distribution-independent; Omarchy/Arch and Ubuntu are tested paths. On macOS the installer also fixes executable permissions and clears the quarantine attribute that can block downloaded binaries.
 
-Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` works with that launcher directly, so no separate Codex installation path is required. Omarchy also reserves the shell alias `cx` for Claude Code. When the installer detects that default Omarchy alias, it adds an idempotent override to the end of `~/.bashrc` that removes only the `cx` alias, leaving Omarchy's files untouched so the `cx` binary wins. Open a new shell or run `source ~/.bashrc` after installation.
+Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` works with that launcher directly, so no separate Codex installation path is required. Omarchy also reserves the shell alias `cx` for Claude Code. When the installer detects that default Omarchy alias, it adds an idempotent override to the end of `~/.bashrc` that removes only the `cx` alias, leaving Omarchy's files untouched so the `cx` binary wins. Open a new shell or run `source ~/.bashrc` after installation. If `cx` was installed on Omarchy before this support was added, rerun the installer once; `cx update` only replaces the binary and does not modify shell configuration.
 
 ## Use
 
