@@ -68,7 +68,7 @@ build_source() {
   command -v go >/dev/null 2>&1 || fail "Go is required to build from source"
   [ -f "$ROOT/go.mod" ] || fail "run source builds from a cx checkout"
   version=$(git -C "$ROOT" describe --tags --always 2>/dev/null | sed 's/^v//' || printf dev)
-  (cd "$ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/ecylmz/cx/internal/cx.Version=$version" -o "$TMPDIR_CX/cx" ./cmd/cx)
+  (cd "$ROOT" && CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X github.com/ecylmz/cx/internal/cx.Version=$version" -o "$TMPDIR_CX/cx" ./cmd/cx)
   install_binary "$TMPDIR_CX/cx"
 }
 
