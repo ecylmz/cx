@@ -38,7 +38,7 @@ func TestFiveHourKnownResetMarksZeroUsageWindowStarted(t *testing.T) {
 func TestFiveHourStateMigratesFromMatchingWeeklyStart(t *testing.T) {
 	p := makeTestPaths(t)
 	now := time.Now()
-	startedAt := now.Add(-30 * time.Second)
+	startedAt := now.Add(-5 * time.Second)
 	weeklyReset := startedAt.Add(7 * 24 * time.Hour).Unix()
 	fiveHourReset := startedAt.Add(5 * time.Hour).Unix()
 	a := Account{
