@@ -156,6 +156,9 @@ func shortDuration(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d/time.Second))
+	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	if h > 0 {
@@ -174,7 +177,10 @@ func looksLikeUnstartedWindow(u WeeklyUsage, now time.Time) bool {
 	}
 	want := time.Duration(u.WindowMinutes) * time.Minute
 	got := time.Unix(u.ResetsAt, 0).Sub(ref)
-	tolerance := 2 * time.Minute
+	// The backend represents an unused rolling window with a reset roughly one
+	// full window ahead. Keep the tolerance tight so a real zero-percent window
+	// becomes visibly active within seconds instead of looking idle for minutes.
+	tolerance := 10 * time.Second
 	return got >= want-tolerance && got <= want+tolerance
 }
 
@@ -191,6 +197,9 @@ func labeledUsageLine(label string, u WeeklyUsage) string {
 	pct := quotaColor(left, fmt.Sprintf("%5.1f%% left", left))
 	base := fmt.Sprintf("  %-6s  %s  %s", label, quotaBar(left, 22), pct)
 	if looksLikeUnstartedWindow(u, time.Now()) {
+		if label == "5 hour" {
+			return base + "   " + dim("not started · starts with Codex use")
+		}
 		return base + "   " + dim("not started")
 	}
 	return base + "   " + dim("resets "+resetText(u.ResetsAt, time.Now()))

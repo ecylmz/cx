@@ -52,12 +52,26 @@ func runDashboard(p paths) error {
 
 	sel := 0
 	for {
-		drawCachedDashboard(p, accounts, sel)
-		results := fetchAllUsageWithPriming(p, accounts)
-		applyCachedUsageFallback(p, results)
+		results := initialRefreshingResults(p, accounts)
+		layout := drawDashboardFrame(p, accounts, results, sel, refreshFooter(0, len(accounts)))
+		cache, _ := loadCache(p)
+		completed := 0
+
+		for update := range fetchUsageUpdatesWithPriming(p, accounts) {
+			r := update.Result
+			if update.Final {
+				completed++
+				applyCachedUsageFallbackResult(cache, &r)
+			}
+			results[update.Index] = r
+			footer := refreshFooter(completed, len(accounts))
+			if completed == len(accounts) {
+				footer = "live 5-hour + weekly quota · live banked resets"
+			}
+			layout = drawDashboardFrame(p, accounts, results, sel, footer)
+		}
 		saveFreshCache(p, results)
 
-		layout := drawDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
 		idx, action, err := dashboardInputLoop(p, accounts, sel, layout)
 		if err != nil {
 			return err
@@ -79,37 +93,64 @@ func runDashboard(p paths) error {
 	}
 }
 
+func refreshFooter(done, total int) string {
+	if total <= 0 {
+		return "refreshing live quota + banked resets…"
+	}
+	return fmt.Sprintf("refreshing %d/%d accounts…", done, total)
+}
+
+const refreshingErrPrefix = "__cx_refreshing__:"
+
+func refreshingError(note string) string {
+	return refreshingErrPrefix + note
+}
+
+func refreshingStatus(errText string) (bool, string) {
+	if !strings.HasPrefix(errText, refreshingErrPrefix) {
+		return false, ""
+	}
+	note := strings.TrimPrefix(errText, refreshingErrPrefix)
+	if note == "" {
+		note = "refreshing…"
+	}
+	return true, note
+}
+
+func initialRefreshingResults(p paths, accounts []Account) []UsageResult {
+	cache, _ := loadCache(p)
+	results := make([]UsageResult, len(accounts))
+	for i, a := range accounts {
+		results[i] = UsageResult{Account: a, Err: refreshingError("refreshing…")}
+		if old, ok := cache[a.ID]; ok {
+			old.Fresh = false
+			results[i].Usage = old
+		}
+	}
+	return results
+}
+
+func applyCachedUsageFallbackResult(cache map[string]WeeklyUsage, r *UsageResult) {
+	if r == nil || r.Err == "" {
+		return
+	}
+	if old, ok := cache[r.Account.ID]; ok {
+		old.Fresh = false
+		old.Err = r.Err
+		r.Usage = old
+	}
+}
+
 func applyCachedUsageFallback(p paths, results []UsageResult) {
 	cache, _ := loadCache(p)
 	for i := range results {
-		if results[i].Err != "" {
-			if old, ok := cache[results[i].Account.ID]; ok {
-				old.Fresh = false
-				old.Err = results[i].Err
-				results[i].Usage = old
-			}
-		}
+		applyCachedUsageFallbackResult(cache, &results[i])
 	}
 }
 
 func drawCachedDashboard(p paths, accounts []Account, sel int) {
-	cache, _ := loadCache(p)
-	if len(cache) == 0 {
-		writeFullFrame(dim(" cx · refreshing live quotas and banked resets…") + "\n")
-		return
-	}
-	results := make([]UsageResult, len(accounts))
-	for i, a := range accounts {
-		results[i].Account = a
-		if old, ok := cache[a.ID]; ok {
-			old.Fresh = false
-			results[i].Usage = old
-			results[i].Err = "refreshing live quota"
-		} else {
-			results[i].Err = "refreshing live quota"
-		}
-	}
-	frame, _ := renderDashboardFrame(p, accounts, results, sel, "refreshing live 5-hour + weekly quota + banked resets…")
+	results := initialRefreshingResults(p, accounts)
+	frame, _ := renderDashboardFrame(p, accounts, results, sel, refreshFooter(0, len(accounts)))
 	writeFullFrame(frame)
 }
 
@@ -181,7 +222,19 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 		b.WriteString(dashboardAccountHeader(st, r.Account, i == sel))
 		b.WriteByte('\n')
 		row++
-		if r.Err == "" {
+
+		if refreshing, note := refreshingStatus(r.Err); refreshing {
+			lines := usageLines(r)
+			for _, line := range lines {
+				b.WriteString("   " + line[2:] + "\n")
+			}
+			row += len(lines)
+			if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
+				note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
+			}
+			fmt.Fprintf(&b, "   %s\n", cyan(note))
+			row++
+		} else if r.Err == "" {
 			lines := usageLines(r)
 			for _, line := range lines {
 				b.WriteString("   " + line[2:] + "\n")
