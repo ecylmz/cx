@@ -26,7 +26,9 @@ cx add backup
 cx
 ```
 
-The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. It draws cached weekly quota values immediately while refreshing live quota and banked-reset data in parallel. If an account's weekly rolling window has not started yet, `cx` sends one minimal ephemeral Codex request to start it; when the 5-hour window is present, that same turn naturally starts it too. `cx` does not send a priming request merely because an otherwise-unused 5-hour window is not started.
+The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. Cached values appear immediately as `refreshing`, then each account switches to live data as its parallel refresh finishes; the footer shows refresh progress across accounts.
+
+If an account's weekly rolling window has not started yet, `cx` sends one minimal ephemeral Codex request to start it; when the 5-hour window is present, that same turn naturally starts it too. A 5-hour window can still show `not started · starts with Codex use` when the weekly window is already active: `cx` deliberately does not spend a model turn merely to start an otherwise-unused 5-hour window. Actual Codex use starts that rolling window.
 
 ```sh
 cx                    # dashboard
