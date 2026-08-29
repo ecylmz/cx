@@ -38,7 +38,7 @@ func doctor(p paths) error {
 				fmt.Printf("  %s %s: credential mismatch/corrupt\n", red("✗"), a.Name)
 				ok = false
 			} else {
-				fmt.Printf("  %s %s\n", green("✓"), a.Name)
+				fmt.Printf("  %s %s · %s\n", green("✓"), a.Name, emptyDash(id.Email))
 			}
 		}
 	}
