@@ -179,10 +179,10 @@ func switchAccount(p paths, a Account) error {
 	if ident.AccountID != a.AccountID {
 		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.AccountID, ident.AccountID)
 	}
-	if err := configureCodexHomeSelection(p, p.CodexHome, a); err != nil {
-		return err
+	if a.Email != "" && ident.Email != "" && !strings.EqualFold(a.Email, ident.Email) {
+		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.Email, ident.Email)
 	}
-	if err := reconcileCodexRuntimeSelection(p, a, ident); err != nil {
+	if err := configureCodexHomeSelection(p, p.CodexHome, a); err != nil {
 		return err
 	}
 
