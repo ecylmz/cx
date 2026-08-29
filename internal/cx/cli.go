@@ -11,6 +11,47 @@ import (
 
 var Version = "dev"
 
+type loginCommandArgs struct {
+	Name          string
+	ExpectedEmail string
+}
+
+func parseLoginCommandArgs(args []string, requireName bool, usage string) (loginCommandArgs, error) {
+	var out loginCommandArgs
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--expect":
+			if out.ExpectedEmail != "" || i+1 >= len(args) {
+				return loginCommandArgs{}, errors.New("usage: " + usage)
+			}
+			i++
+			out.ExpectedEmail = strings.TrimSpace(args[i])
+			if out.ExpectedEmail == "" {
+				return loginCommandArgs{}, errors.New("usage: " + usage)
+			}
+		case strings.HasPrefix(a, "--expect="):
+			if out.ExpectedEmail != "" {
+				return loginCommandArgs{}, errors.New("usage: " + usage)
+			}
+			out.ExpectedEmail = strings.TrimSpace(strings.TrimPrefix(a, "--expect="))
+			if out.ExpectedEmail == "" {
+				return loginCommandArgs{}, errors.New("usage: " + usage)
+			}
+		case strings.HasPrefix(a, "-"):
+			return loginCommandArgs{}, errors.New("usage: " + usage)
+		case out.Name == "":
+			out.Name = a
+		default:
+			return loginCommandArgs{}, errors.New("usage: " + usage)
+		}
+	}
+	if requireName && out.Name == "" {
+		return loginCommandArgs{}, errors.New("usage: " + usage)
+	}
+	return out, nil
+}
+
 func Main() {
 	p, err := resolvePaths()
 	if err != nil {
@@ -34,11 +75,11 @@ func Main() {
 	case "version", "--version":
 		fmt.Printf("cx %s\n", Version)
 	case "add":
-		name := ""
-		if len(args) > 1 {
-			name = args[1]
+		opts, err := parseLoginCommandArgs(args[1:], false, "cx add [NAME] [--expect EMAIL]")
+		if err != nil {
+			fatal(err)
 		}
-		a, err := addAccount(p, name)
+		a, err := addAccount(p, opts.Name, opts.ExpectedEmail)
 		if err != nil {
 			fatal(err)
 		}
@@ -48,14 +89,15 @@ func Main() {
 		}
 		fmt.Println()
 	case "relogin":
-		if len(args) != 2 {
-			fatal(errors.New("usage: cx relogin NAME"))
-		}
-		a, err := reloginAccount(p, args[1])
+		opts, err := parseLoginCommandArgs(args[1:], true, "cx relogin NAME [--expect EMAIL]")
 		if err != nil {
 			fatal(err)
 		}
-		fmt.Printf("%s refreshed credentials for %s\n", green("✓"), a.Name)
+		a, err := reloginAccount(p, opts.Name, opts.ExpectedEmail)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("%s refreshed credentials for %s (%s)\n", green("✓"), a.Name, emptyDash(a.Email))
 	case "use":
 		handleUse(p, args[1:])
 	case "status":
@@ -119,7 +161,11 @@ func handleUse(p paths, args []string) {
 	if err := switchAccount(p, acct); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("%s switched to %s\n", green("✓"), acct.Name)
+	fmt.Printf("%s switched to %s", green("✓"), acct.Name)
+	if acct.Email != "" {
+		fmt.Printf(" (%s)", acct.Email)
+	}
+	fmt.Println()
 	if resume {
 		cmd := exec.Command("codex", "resume", "--last")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -222,18 +268,20 @@ func printHelp() {
 	fmt.Print(`cx — minimal Codex account switcher
 
 Usage:
-  cx                         live weekly quota dashboard; starts unused window
-  cx status [NAME] [--json] live weekly quota status; starts unused window
-  cx add [NAME]             add account with Codex device auth
-  cx relogin NAME           replace one account's credential safely
-  cx use [NAME] [--resume]  switch account; interactive if NAME omitted
-  cx current                show active account
-  cx list                   list accounts without network access
+  cx                                  live quota dashboard; starts unused windows
+  cx status [NAME] [--json]           live quota status; starts unused windows
+  cx add [NAME] [--expect EMAIL]      add account with Codex device auth
+  cx relogin NAME [--expect EMAIL]    refresh one account's credential safely
+  cx use [NAME] [--resume]            switch account; interactive if NAME omitted
+  cx current                          show active account
+  cx list                             list accounts without network access
   cx rename OLD NEW
   cx remove NAME
   cx doctor
-  cx update [--force]        install latest GitHub release
+  cx update [--force]                 install latest GitHub release
   cx version
+
+Use --expect EMAIL when adding or re-authorizing an account to reject a browser/device-auth login to the wrong ChatGPT account before its credential is saved.
 
 Dashboard keys: ↑/↓ or j/k select · enter switch · r refresh · q quit
 `)
