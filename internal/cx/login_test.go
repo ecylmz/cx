@@ -1,6 +1,8 @@
 package cx
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +31,28 @@ exit 2
 	t.Setenv("CX_TEST_AUTH_SOURCE", authSource)
 }
 
+func testAuthBytesForEmail(t *testing.T, accountID, email string) []byte {
+	t.Helper()
+	payload := map[string]any{
+		"email": email,
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": accountID,
+			"chatgpt_plan_type":  "plus",
+		},
+	}
+	b, _ := json.Marshal(payload)
+	tok := "x." + base64.RawURLEncoding.EncodeToString(b) + ".y"
+	raw, _ := json.Marshal(map[string]any{
+		"tokens": map[string]any{
+			"id_token":      tok,
+			"access_token":  "access",
+			"refresh_token": "refresh",
+			"account_id":    accountID,
+		},
+	})
+	return raw
+}
+
 func TestRunDeviceAuthAndAddAccount(t *testing.T) {
 	p := makeTestPaths(t)
 	authSource := filepath.Join(t.TempDir(), "auth.json")
@@ -49,7 +73,7 @@ func TestRunDeviceAuthAndAddAccount(t *testing.T) {
 		t.Fatalf("config=%s", cfg)
 	}
 
-	a, err := addAccount(p, "primary")
+	a, err := addAccount(p, "primary", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +89,7 @@ func TestRunDeviceAuthAndAddAccount(t *testing.T) {
 		t.Fatalf("active auth not symlink: %v %v", info, err)
 	}
 
-	again, err := addAccount(p, "ignored-name")
+	again, err := addAccount(p, "ignored-name", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +110,7 @@ func TestAddAccountAutoNamesCollisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	installFakeLoginCodex(t, source)
-	a, err := addAccount(p, "")
+	a, err := addAccount(p, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,12 +120,44 @@ func TestAddAccountAutoNamesCollisions(t *testing.T) {
 	if err := os.WriteFile(source, testAuthBytes(t, "acct-2"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	b, err := addAccount(p, "")
+	b, err := addAccount(p, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.Name != "x-2" {
 		t.Fatalf("collision name=%q", b.Name)
+	}
+}
+
+func TestAddAccountExpectedEmailRejectsWrongBrowserAccount(t *testing.T) {
+	p := makeTestPaths(t)
+	source := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(source, testAuthBytesForEmail(t, "acct-wrong", "wrong@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	installFakeLoginCodex(t, source)
+
+	_, err := addAccount(p, "backup", "right@example.com")
+	if err == nil || !strings.Contains(err.Error(), "authenticated as wrong@example.com") || !strings.Contains(err.Error(), "credential was not saved") {
+		t.Fatalf("expected email mismatch, got %v", err)
+	}
+	accounts, listErr := listAccounts(p)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("wrong account was persisted: %+v", accounts)
+	}
+
+	if err := os.WriteFile(source, testAuthBytesForEmail(t, "acct-right", "RIGHT@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := addAccount(p, "backup", "right@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Email != "RIGHT@example.com" || a.AccountID != "acct-right" {
+		t.Fatalf("account=%+v", a)
 	}
 }
 
@@ -114,15 +170,41 @@ func TestReloginRequiresSameAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	installFakeLoginCodex(t, source)
-	if _, err := reloginAccount(p, "primary"); err == nil || !strings.Contains(err.Error(), "account mismatch") {
+	if _, err := reloginAccount(p, "primary", ""); err == nil || !strings.Contains(err.Error(), "account mismatch") {
 		t.Fatalf("expected mismatch, got %v", err)
 	}
 	if err := os.WriteFile(source, testAuthBytes(t, "acct-1"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := reloginAccount(p, "primary")
+	got, err := reloginAccount(p, "primary", "x@example.com")
 	if err != nil || got.AccountID != "acct-1" {
 		t.Fatalf("relogin=%+v err=%v", got, err)
+	}
+}
+
+func TestReloginExpectedEmailRejectsWrongCredentialBeforeOverwrite(t *testing.T) {
+	p := makeTestPaths(t)
+	a := Account{ID: "a", Name: "primary", AccountID: "acct-1", Email: "right@example.com"}
+	writeTestAccount(t, p, a)
+	before, err := os.ReadFile(p.accountAuth(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(source, testAuthBytesForEmail(t, "acct-1", "wrong@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	installFakeLoginCodex(t, source)
+	if _, err := reloginAccount(p, "primary", "right@example.com"); err == nil || !strings.Contains(err.Error(), "credential was not saved") {
+		t.Fatalf("expected email mismatch, got %v", err)
+	}
+	after, err := os.ReadFile(p.accountAuth(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("stored credential changed after rejected relogin")
 	}
 }
 
