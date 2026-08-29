@@ -74,6 +74,11 @@ func Main() {
 		printHelp()
 	case "version", "--version":
 		fmt.Printf("cx %s\n", Version)
+	case "shell-init":
+		if len(args) != 1 {
+			fatal(errors.New("usage: cx shell-init"))
+		}
+		printShellInit()
 	case "add":
 		opts, err := parseLoginCommandArgs(args[1:], false, "cx add [NAME] [--expect EMAIL]")
 		if err != nil {
@@ -167,7 +172,7 @@ func handleUse(p paths, args []string) {
 	}
 	fmt.Println()
 	if resume {
-		cmd := exec.Command("codex", "resume", "--last")
+		cmd := exec.Command("codex", "-c", `cli_auth_credentials_store="file"`, "resume", "--last")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
 			fatal(err)
@@ -278,8 +283,11 @@ Usage:
   cx rename OLD NEW
   cx remove NAME
   cx doctor
+  cx shell-init                       shell wrapper for deterministic Codex auth
   cx update [--force]                 install latest GitHub release
   cx version
+
+Add 'eval "$(cx shell-init)"' to your shell startup file. It keeps bare Codex launches on the selected auth.json instead of reusing a stale local app-server account.
 
 Use --expect EMAIL when adding or re-authorizing an account to reject a browser/device-auth login to the wrong ChatGPT account before its credential is saved.
 
