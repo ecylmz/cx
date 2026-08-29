@@ -46,6 +46,15 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 			return Account{}, err
 		}
 	}
+
+	// On the very first add, preserve a pre-existing bare Codex login as its
+	// own managed account before starting isolated device auth for the new one.
+	// This removes the old first-switch special case where the unmanaged
+	// auth.json was only hidden in auth.json.cx-backup.
+	if _, _, err := adoptExistingCodexAuth(p, requestedName); err != nil {
+		return Account{}, err
+	}
+
 	id, err := newID()
 	if err != nil {
 		return Account{}, err
@@ -73,7 +82,7 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 		return Account{}, err
 	}
 	for _, existing := range accounts {
-		if existing.AccountID == ident.AccountID {
+		if sameStoredIdentity(existing, ident) {
 			if err := installAuth(filepath.Join(stage, "auth.json"), p.accountAuth(existing.ID)); err != nil {
 				return Account{}, err
 			}
@@ -169,8 +178,8 @@ func reloginAccount(p paths, selector, expectedEmail string) (Account, error) {
 	if err := verifyExpectedEmail(ident, expectedEmail); err != nil {
 		return Account{}, err
 	}
-	if ident.AccountID != a.AccountID {
-		return Account{}, fmt.Errorf("account mismatch: expected %s (%s), received %s; credential was not saved", a.Name, a.AccountID, ident.AccountID)
+	if ident.AccountID != a.AccountID || (a.Email != "" && !strings.EqualFold(a.Email, ident.Email)) {
+		return Account{}, fmt.Errorf("account mismatch: expected %s (%s, %s), received %s (%s); credential was not saved", a.Name, a.AccountID, emptyDash(a.Email), ident.AccountID, emptyDash(ident.Email))
 	}
 	if err := installAuth(filepath.Join(stage, "auth.json"), p.accountAuth(a.ID)); err != nil {
 		return Account{}, err
