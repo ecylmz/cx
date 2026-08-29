@@ -49,8 +49,6 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 
 	// On the very first add, preserve a pre-existing bare Codex login as its
 	// own managed account before starting isolated device auth for the new one.
-	// This removes the old first-switch special case where the unmanaged
-	// auth.json was only hidden in auth.json.cx-backup.
 	if _, _, err := adoptExistingCodexAuth(p, requestedName); err != nil {
 		return Account{}, err
 	}
@@ -83,14 +81,11 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 	}
 	for _, existing := range accounts {
 		if sameStoredIdentity(existing, ident) {
-			if err := installAuth(filepath.Join(stage, "auth.json"), p.accountAuth(existing.ID)); err != nil {
-				return Account{}, err
-			}
-			existing.Email, existing.Plan, existing.UpdatedAt = ident.Email, ident.Plan, time.Now()
-			if err := writeJSON(p.accountMeta(existing.ID), existing); err != nil {
-				return Account{}, err
-			}
-			return existing, nil
+			return Account{}, fmt.Errorf(
+				"account is already managed as %s (%s); choose a different ChatGPT account",
+				existing.Name,
+				emptyDash(existing.Email),
+			)
 		}
 	}
 
