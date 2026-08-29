@@ -112,19 +112,10 @@ func installAuth(src, dst string) error {
 	return atomicWrite(dst, b, 0600)
 }
 
-func switchAccount(p paths, a Account) error {
-	if err := ensureFileStoreConfig(p.sharedConfigPath(), true); err != nil {
-		return fmt.Errorf("configure Codex file credential store: %w", err)
+func installManagedAuthLink(p paths, live string, a Account) error {
+	if err := os.MkdirAll(filepath.Dir(live), 0700); err != nil {
+		return err
 	}
-	ident, err := parseAuth(p.accountAuth(a.ID))
-	if err != nil {
-		return fmt.Errorf("invalid credential for %s: %w", a.Name, err)
-	}
-	if ident.AccountID != a.AccountID {
-		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.AccountID, ident.AccountID)
-	}
-
-	live := p.sharedAuthPath()
 	info, err := os.Lstat(live)
 	if err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -136,15 +127,15 @@ func switchAccount(p paths, a Account) error {
 			abs, _ = filepath.Abs(abs)
 			root, _ := filepath.Abs(p.AccountsRoot)
 			if !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
-				return errors.New("~/.codex/auth.json is a symlink not managed by cx; refusing to replace it")
+				return fmt.Errorf("%s is a symlink not managed by cx; refusing to replace it", live)
 			}
 		} else {
 			bak := live + ".cx-backup"
 			if _, berr := os.Lstat(bak); berr == nil {
-				return errors.New("unmanaged ~/.codex/auth.json detected and a cx backup already exists; refusing to overwrite it")
+				return fmt.Errorf("unmanaged %s detected and a cx backup already exists; refusing to overwrite it", live)
 			}
 			if err := os.Rename(live, bak); err != nil {
-				return fmt.Errorf("backup existing auth.json: %w", err)
+				return fmt.Errorf("backup existing %s: %w", live, err)
 			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -158,6 +149,40 @@ func switchAccount(p paths, a Account) error {
 	}
 	if err := os.Rename(tmp, live); err != nil {
 		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func configureCodexHomeSelection(p paths, home string, a Account) error {
+	home, err := filepath.Abs(home)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(home, 0700); err != nil {
+		return fmt.Errorf("create Codex home %s: %w", home, err)
+	}
+	if err := ensureFileStoreConfig(filepath.Join(home, "config.toml"), true); err != nil {
+		return fmt.Errorf("configure Codex file credential store in %s: %w", home, err)
+	}
+	if err := installManagedAuthLink(p, filepath.Join(home, "auth.json"), a); err != nil {
+		return fmt.Errorf("activate %s in Codex home %s: %w", a.Name, home, err)
+	}
+	return nil
+}
+
+func switchAccount(p paths, a Account) error {
+	ident, err := parseAuth(p.accountAuth(a.ID))
+	if err != nil {
+		return fmt.Errorf("invalid credential for %s: %w", a.Name, err)
+	}
+	if ident.AccountID != a.AccountID {
+		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.AccountID, ident.AccountID)
+	}
+	if err := configureCodexHomeSelection(p, p.CodexHome, a); err != nil {
+		return err
+	}
+	if err := reconcileCodexRuntimeSelection(p, a, ident); err != nil {
 		return err
 	}
 
