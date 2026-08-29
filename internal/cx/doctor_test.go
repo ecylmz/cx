@@ -19,6 +19,7 @@ func TestDoctorHealthyAndMissingCodex(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CX_CODEX_SHELL_INTEGRATION", "1")
 	if err := switchAccount(p, a); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestDoctorHealthyAndMissingCodex(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	for _, want := range []string{"codex-test 1.0", "credential store: file", "accounts: 1", "active auth symlink: managed"} {
+	for _, want := range []string{"codex-test 1.0", "credential store: file", "Codex shell integration: active", "accounts: 1", "active auth symlink: managed"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
