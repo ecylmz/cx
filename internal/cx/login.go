@@ -26,7 +26,21 @@ func runDeviceAuth(home string) error {
 	return cmd.Run()
 }
 
-func addAccount(p paths, requestedName string) (Account, error) {
+func verifyExpectedEmail(ident authIdentity, expectedEmail string) error {
+	expectedEmail = strings.TrimSpace(expectedEmail)
+	if expectedEmail == "" {
+		return nil
+	}
+	if ident.Email == "" {
+		return fmt.Errorf("authenticated account did not expose an email; expected %s; credential was not saved", expectedEmail)
+	}
+	if !strings.EqualFold(ident.Email, expectedEmail) {
+		return fmt.Errorf("authenticated as %s, expected %s; credential was not saved", ident.Email, expectedEmail)
+	}
+	return nil
+}
+
+func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 	if requestedName != "" {
 		if err := validateName(requestedName); err != nil {
 			return Account{}, err
@@ -40,11 +54,17 @@ func addAccount(p paths, requestedName string) (Account, error) {
 	defer os.RemoveAll(stage)
 
 	fmt.Println(dim("Starting Codex device authorization in an isolated credential home..."))
+	if expectedEmail != "" {
+		fmt.Printf("%s expected account: %s\n", dim("→"), strings.TrimSpace(expectedEmail))
+	}
 	if err := runDeviceAuth(stage); err != nil {
 		return Account{}, fmt.Errorf("device auth failed: %w", err)
 	}
 	ident, err := parseAuth(filepath.Join(stage, "auth.json"))
 	if err != nil {
+		return Account{}, err
+	}
+	if err := verifyExpectedEmail(ident, expectedEmail); err != nil {
 		return Account{}, err
 	}
 
@@ -82,7 +102,6 @@ func addAccount(p paths, requestedName string) (Account, error) {
 					collision = true
 					break
 				}
-			}
 			if !collision {
 				break
 			}
@@ -124,7 +143,7 @@ func addAccount(p paths, requestedName string) (Account, error) {
 	return a, nil
 }
 
-func reloginAccount(p paths, selector string) (Account, error) {
+func reloginAccount(p paths, selector, expectedEmail string) (Account, error) {
 	a, err := findAccount(p, selector)
 	if err != nil {
 		return Account{}, err
@@ -136,6 +155,9 @@ func reloginAccount(p paths, selector string) (Account, error) {
 	stage := filepath.Join(p.DataRoot, ".relogin-"+id)
 	defer os.RemoveAll(stage)
 	fmt.Printf("Re-authorizing %s (%s)\n", a.Name, emptyDash(a.Email))
+	if expectedEmail != "" {
+		fmt.Printf("%s expected account: %s\n", dim("→"), strings.TrimSpace(expectedEmail))
+	}
 	if err := runDeviceAuth(stage); err != nil {
 		return Account{}, fmt.Errorf("device auth failed: %w", err)
 	}
@@ -143,8 +165,11 @@ func reloginAccount(p paths, selector string) (Account, error) {
 	if err != nil {
 		return Account{}, err
 	}
+	if err := verifyExpectedEmail(ident, expectedEmail); err != nil {
+		return Account{}, err
+	}
 	if ident.AccountID != a.AccountID {
-		return Account{}, fmt.Errorf("account mismatch: expected %s (%s), received %s", a.Name, a.AccountID, ident.AccountID)
+		return Account{}, fmt.Errorf("account mismatch: expected %s (%s), received %s; credential was not saved", a.Name, a.AccountID, ident.AccountID)
 	}
 	if err := installAuth(filepath.Join(stage, "auth.json"), p.accountAuth(a.ID)); err != nil {
 		return Account{}, err
