@@ -67,17 +67,17 @@ func TestFirstAddAdoptsExistingCodexLoginBeforeAddingDifferentAccount(t *testing
 	if len(accounts) != 2 {
 		t.Fatalf("accounts=%+v", accounts)
 	}
-	var current, backup Account
+	var existing, backup Account
 	for _, a := range accounts {
 		switch a.Name {
-		case "current":
-			current = a
+		case "emre.can.ylmz":
+			existing = a
 		case "backup1":
 			backup = a
 		}
 	}
-	if current.ID == "" || !strings.EqualFold(current.Email, oldEmail) {
-		t.Fatalf("existing login was not adopted: %+v", current)
+	if existing.ID == "" || !strings.EqualFold(existing.Email, oldEmail) {
+		t.Fatalf("existing login was not adopted: %+v", existing)
 	}
 	if backup.ID == "" || !strings.EqualFold(backup.Email, newEmail) {
 		t.Fatalf("new login was not stored separately: %+v", backup)
@@ -87,8 +87,8 @@ func TestFirstAddAdoptsExistingCodexLoginBeforeAddingDifferentAccount(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.ActiveID != current.ID {
-		t.Fatalf("first add should preserve the pre-existing active login: state=%+v current=%+v", st, current)
+	if st.ActiveID != existing.ID {
+		t.Fatalf("first add should preserve the pre-existing active login: state=%+v existing=%+v", st, existing)
 	}
 	live, err := parseAuth(p.sharedAuthPath())
 	if err != nil {
