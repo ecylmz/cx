@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -210,8 +209,4 @@ func codexRuntimeSummary() (codexRuntimeAccount, bool) {
 		return codexRuntimeAccount{}, false
 	}
 	return runtime, true
-}
-
-func init() {
-	_ = os.ErrNotExist
 }
