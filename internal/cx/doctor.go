@@ -34,8 +34,13 @@ func doctor(p paths) error {
 		fmt.Printf("%s accounts: %d\n", green("✓"), len(as))
 		for _, a := range as {
 			id, e := parseAuth(p.accountAuth(a.ID))
-			if e != nil || id.AccountID != a.AccountID {
-				fmt.Printf("  %s %s: credential mismatch/corrupt\n", red("✗"), a.Name)
+			emailMismatch := a.Email != "" && !strings.EqualFold(a.Email, id.Email)
+			if e != nil || id.AccountID != a.AccountID || emailMismatch {
+				fmt.Printf("  %s %s: credential mismatch/corrupt", red("✗"), a.Name)
+				if e == nil {
+					fmt.Printf(" · metadata %s / auth %s", emptyDash(a.Email), emptyDash(id.Email))
+				}
+				fmt.Println()
 				ok = false
 			} else {
 				fmt.Printf("  %s %s · %s\n", green("✓"), a.Name, emptyDash(id.Email))
