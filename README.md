@@ -16,7 +16,17 @@ curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
 
 The installer downloads the latest native release for Apple Silicon/Intel macOS or amd64/arm64 Linux, verifies `SHA256SUMS`, and installs `cx` to `~/.local/bin`. Linux support is distribution-independent; Omarchy/Arch and Ubuntu are tested paths. On macOS the installer also fixes executable permissions and clears the quarantine attribute that can block downloaded binaries.
 
-Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` works with that launcher directly, so no separate Codex installation path is required. Omarchy also reserves the shell alias `cx` for Claude Code. When the installer detects that default Omarchy alias, it adds an idempotent override to the end of `~/.bashrc` that removes only the `cx` alias, leaving Omarchy's files untouched so the `cx` binary wins. Open a new shell or run `source ~/.bashrc` after installation. If `cx` was installed on Omarchy before this support was added, rerun the installer once; `cx update` only replaces the binary and does not modify shell configuration.
+The installer also adds a small shell integration for bash or zsh. It evaluates `cx shell-init`, which wraps bare `codex` launches with the harmless CLI override `cli_auth_credentials_store="file"`. Modern Codex TUI versions otherwise may reconnect to a long-lived local app-server that still holds the account that was active before a cx switch. The override keeps the same `CODEX_HOME`, sessions, history, memories, and configuration, but makes each new TUI launch read the currently selected `auth.json` instead of implicitly reusing stale app-server auth.
+
+If you update an older cx installation with `cx update`, activate the shell integration once in the current shell:
+
+```sh
+eval "$(cx shell-init)"
+```
+
+For persistence, add that same line to `~/.zshrc` or `~/.bashrc`, or rerun the installer once.
+
+Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` works with that launcher directly. Omarchy also reserves the shell alias `cx` for Claude Code. When the installer detects that default alias, it adds an idempotent override to the end of `~/.bashrc` that removes only the `cx` alias, leaving Omarchy's files untouched so the `cx` binary wins.
 
 ## Use
 
@@ -26,22 +36,25 @@ cx add backup --expect other@example.com
 cx
 ```
 
-Use `--expect EMAIL` when adding or re-authorizing an account if multiple ChatGPT accounts are signed into the browser. After Codex device authorization finishes, cx reads the resulting credential before persisting it. If the authenticated email differs from the expected email, cx rejects the login and leaves the stored account unchanged.
+Use `--expect EMAIL` when adding or re-authorizing an account if multiple ChatGPT accounts are signed into the browser. After Codex device authorization finishes, cx reads the resulting credential before persisting it. If the authenticated email differs from the expected email, cx rejects the login and leaves the stored account unchanged. If the same ChatGPT identity is already managed by cx, `cx add` also rejects the duplicate instead of silently merging it into another account name.
+
+On the first add, if `~/.codex/auth.json` already contains a normal ChatGPT login, cx preserves it as a managed account before adding the new one. Its name is derived from the email local part when possible, so `emre.can.ylmz@gmail.com` becomes `emre.can.ylmz` rather than an opaque `current` account.
 
 The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. Cached values appear immediately as `refreshing`, then each account switches to live data as its parallel refresh finishes; the footer shows refresh progress across accounts.
 
 Opening the interactive `cx` dashboard also starts any unused rolling quota window it finds. If either the 5-hour or weekly window is `not started`, `cx` sends one minimal ephemeral Codex request for that account, then refreshes its quota and stores the resulting reset timestamps. The same tiny turn starts both windows when both are unused. Window-start requests run in parallel with a small concurrency limit, so multiple accounts do not serialize unnecessarily. This intentionally consumes a very small amount of Codex quota in exchange for keeping every account's 5-hour and weekly reset countdowns active when the dashboard is opened.
 
-Account switching is verified against the actual `codex` executable on `PATH`. After `cx use NAME`, cx probes Codex's app-server for its effective `codexHome` and current ChatGPT account. If a wrapper or pre-existing Codex installation resolves another home, cx configures that home to use the selected managed `auth.json` too and verifies the account again. Codex 0.151 and newer can also reuse a shared local app-server daemon whose in-memory auth may outlive an `auth.json` switch. When that daemon is present, cx probes the daemon through Codex's own app-server proxy; if it still serves the previous account, cx restarts the managed daemon and verifies it again before reporting success. A daemon restart can briefly disconnect other active Codex clients, but it does not delete persisted sessions or history. If Codex can still be observed using another account, `cx use` fails instead of reporting a false successful switch. `cx doctor` reports each stored account identity, the fresh runtime account, and the shared daemon account when available.
+Account switching is deliberately simple. `cx use NAME` validates the stored credential, atomically changes the shared `~/.codex/auth.json` symlink to the selected managed credential, updates cx state, and returns. It does not start Codex, probe app-server RPCs, restart daemons, kill processes, or alter session/history databases. The shell integration is what keeps subsequent bare `codex` TUI launches from attaching to stale app-server auth.
 
 ```sh
 cx                                      # dashboard
 cx status                               # live status for every account
 cx use                                  # interactive account switch
-cx use primary                          # switch directly and verify Codex runtime account
+cx use primary                          # atomic auth.json symlink switch
 cx add backup --expect you@example.com  # add and reject the wrong browser account
 cx relogin backup --expect you@example.com
-cx doctor                               # verify stored and effective Codex identities
+cx doctor                               # verify cx files, symlink and shell integration
+cx shell-init                           # print bash/zsh Codex wrapper
 cx update                               # install latest release
 cx version
 ```
