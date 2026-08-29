@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+func TestParseLoginCommandArgs(t *testing.T) {
+	got, err := parseLoginCommandArgs([]string{"backup", "--expect", "user@example.com"}, false, "cx add [NAME] [--expect EMAIL]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "backup" || got.ExpectedEmail != "user@example.com" {
+		t.Fatalf("args=%+v", got)
+	}
+
+	got, err = parseLoginCommandArgs([]string{"--expect=user@example.com", "backup"}, true, "cx relogin NAME [--expect EMAIL]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "backup" || got.ExpectedEmail != "user@example.com" {
+		t.Fatalf("args=%+v", got)
+	}
+
+	for _, args := range [][]string{{"--expect"}, {"--bad"}, {"backup", "other"}, {"--expect", "a@example.com", "--expect", "b@example.com"}} {
+		if _, err := parseLoginCommandArgs(args, false, "cx add [NAME] [--expect EMAIL]"); err == nil {
+			t.Fatalf("expected parse failure for %+v", args)
+		}
+	}
+	if _, err := parseLoginCommandArgs([]string{"--expect", "a@example.com"}, true, "cx relogin NAME [--expect EMAIL]"); err == nil {
+		t.Fatal("expected relogin name requirement")
+	}
+}
+
 func TestPrintHelpListCurrentAndUse(t *testing.T) {
 	p := makeTestPaths(t)
 	a := Account{ID: "a", Name: "primary", AccountID: "acct-a", Email: "a@example.com", Plan: "plus", CreatedAt: time.Now(), UpdatedAt: time.Now()}
@@ -19,7 +46,7 @@ func TestPrintHelpListCurrentAndUse(t *testing.T) {
 	}
 
 	out := captureStdout(t, printHelp)
-	if !strings.Contains(out, "cx update") || !strings.Contains(out, "cx status") {
+	if !strings.Contains(out, "cx update") || !strings.Contains(out, "cx status") || !strings.Contains(out, "--expect EMAIL") {
 		t.Fatalf("help=%q", out)
 	}
 	out = captureStdout(t, func() { handleList(p) })
