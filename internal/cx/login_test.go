@@ -89,12 +89,8 @@ func TestRunDeviceAuthAndAddAccount(t *testing.T) {
 		t.Fatalf("active auth not symlink: %v %v", info, err)
 	}
 
-	again, err := addAccount(p, "ignored-name", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.ID != a.ID {
-		t.Fatalf("duplicate account created: %s != %s", again.ID, a.ID)
+	if _, err := addAccount(p, "ignored-name", ""); err == nil || !strings.Contains(err.Error(), "already managed as primary") {
+		t.Fatalf("expected duplicate rejection, got %v", err)
 	}
 	accounts, _ := listAccounts(p)
 	if len(accounts) != 1 {
