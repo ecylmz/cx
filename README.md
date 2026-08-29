@@ -28,7 +28,7 @@ cx
 
 The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. Cached values appear immediately as `refreshing`, then each account switches to live data as its parallel refresh finishes; the footer shows refresh progress across accounts.
 
-If an account's weekly rolling window has not started yet, `cx` sends one minimal ephemeral Codex request to start it; when the 5-hour window is present, that same turn naturally starts it too. A 5-hour window can still show `not started · starts with Codex use` when the weekly window is already active: `cx` deliberately does not spend a model turn merely to start an otherwise-unused 5-hour window. Actual Codex use starts that rolling window.
+Opening the interactive `cx` dashboard also starts any unused rolling quota window it finds. If either the 5-hour or weekly window is `not started`, `cx` sends one minimal ephemeral Codex request for that account, then refreshes its quota and stores the resulting reset timestamps. The same tiny turn starts both windows when both are unused. Window-start requests run in parallel with a small concurrency limit, so multiple accounts do not serialize unnecessarily. This intentionally consumes a very small amount of Codex quota in exchange for keeping every account's 5-hour and weekly reset countdowns active when the dashboard is opened.
 
 ```sh
 cx                    # dashboard
