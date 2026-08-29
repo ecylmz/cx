@@ -26,6 +26,12 @@ func doctor(p paths) error {
 	} else {
 		fmt.Printf("%s credential store: file\n", green("✓"))
 	}
+	if os.Getenv("CX_CODEX_SHELL_INTEGRATION") == "1" {
+		fmt.Printf("%s Codex shell integration: active\n", green("✓"))
+	} else {
+		fmt.Printf("%s Codex shell integration: inactive · run: eval \"$(cx shell-init)\"\n", yellow("!"))
+		ok = false
+	}
 	as, err := listAccounts(p)
 	if err != nil {
 		fmt.Printf("%s accounts: %v\n", red("✗"), err)
@@ -68,34 +74,6 @@ func doctor(p paths) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("%s active auth: %v\n", red("✗"), err)
 		ok = false
-	}
-
-	st, _ := loadState(p)
-	var expected authIdentity
-	for _, a := range as {
-		if a.ID == st.ActiveID {
-			expected, _ = parseAuth(p.accountAuth(a.ID))
-			break
-		}
-	}
-
-	if runtime, available := codexRuntimeSummary(); available {
-		fmt.Printf("%s runtime home: %s\n", green("✓"), emptyDash(runtime.CodexHome))
-		if expected.Email != "" && !runtimeMatchesSelection(runtime, expected) {
-			fmt.Printf("%s runtime account: %s · expected %s\n", red("✗"), runtimeAccountLabel(runtime), expected.Email)
-			ok = false
-		} else {
-			fmt.Printf("%s runtime account: %s\n", green("✓"), runtimeAccountLabel(runtime))
-		}
-	}
-
-	if daemon, available := codexDaemonSummary(); available {
-		if expected.Email != "" && !runtimeMatchesSelection(daemon, expected) {
-			fmt.Printf("%s shared daemon account: %s · expected %s\n", red("✗"), runtimeAccountLabel(daemon), expected.Email)
-			ok = false
-		} else {
-			fmt.Printf("%s shared daemon account: %s\n", green("✓"), runtimeAccountLabel(daemon))
-		}
 	}
 
 	if !ok {
