@@ -64,6 +64,25 @@ func doctor(p paths) error {
 		fmt.Printf("%s active auth: %v\n", red("✗"), err)
 		ok = false
 	}
+
+	if runtime, available := codexRuntimeSummary(); available {
+		fmt.Printf("%s runtime home: %s\n", green("✓"), emptyDash(runtime.CodexHome))
+		st, _ := loadState(p)
+		var expected authIdentity
+		for _, a := range as {
+			if a.ID == st.ActiveID {
+				expected, _ = parseAuth(p.accountAuth(a.ID))
+				break
+			}
+		}
+		if expected.Email != "" && !runtimeMatchesSelection(runtime, expected) {
+			fmt.Printf("%s runtime account: %s · expected %s\n", red("✗"), runtimeAccountLabel(runtime), expected.Email)
+			ok = false
+		} else {
+			fmt.Printf("%s runtime account: %s\n", green("✓"), runtimeAccountLabel(runtime))
+		}
+	}
+
 	if !ok {
 		return errors.New("doctor found problems")
 	}
