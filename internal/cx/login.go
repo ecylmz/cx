@@ -102,6 +102,7 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 					collision = true
 					break
 				}
+			}
 			if !collision {
 				break
 			}
