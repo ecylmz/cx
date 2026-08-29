@@ -10,9 +10,9 @@ import (
 )
 
 // adoptExistingCodexAuth turns a pre-cx ChatGPT login in CODEX_HOME/auth.json
-// into the first managed cx account before a new account is added. This keeps
-// the already-active Codex identity explicit and makes the first real switch
-// use the same managed-account path as every later switch.
+// into the first managed cx account before a new account is added. The adopted
+// account is named from its email when possible instead of using an opaque
+// "current" label.
 func adoptExistingCodexAuth(p paths, reservedName string) (Account, bool, error) {
 	accounts, err := listAccounts(p)
 	if err != nil {
@@ -45,9 +45,17 @@ func adoptExistingCodexAuth(p paths, reservedName string) (Account, bool, error)
 	if err != nil {
 		return Account{}, false, err
 	}
-	name := "current"
-	if strings.EqualFold(strings.TrimSpace(reservedName), name) {
+	name := "existing"
+	if ident.Email != "" {
+		if i := strings.IndexByte(ident.Email, '@'); i > 0 {
+			name = ident.Email[:i]
+		}
+	}
+	if validateName(name) != nil {
 		name = "existing"
+	}
+	if strings.EqualFold(strings.TrimSpace(reservedName), name) {
+		name += "-existing"
 	}
 
 	if err := os.MkdirAll(p.accountDir(id), 0700); err != nil {
