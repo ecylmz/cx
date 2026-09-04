@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 var errAllAccountsExhausted = errors.New("all accounts are exhausted")
@@ -21,24 +22,34 @@ func handleAuto(p paths) error {
 	if err != nil {
 		return err
 	}
-	active := false
-	for _, account := range accounts {
-		if account.ID == st.ActiveID {
-			active = true
+	active := -1
+	for i := range accounts {
+		if accounts[i].ID == st.ActiveID {
+			active = i
 			break
 		}
 	}
-	if !active {
+	if active < 0 {
 		return errors.New("no active account; select one with: cx use NAME")
 	}
 
-	account, keep, err := selectAutoAccount(fetchAllUsage(p, accounts), st.ActiveID)
+	activeResult := fetchAutoUsage(p, accounts[active])
+	weekly, fiveHour, err := autoQuotaRemaining(activeResult)
+	if err != nil {
+		return fmt.Errorf("quota unavailable for %s: %w", activeResult.Account.Name, err)
+	}
+	if weekly > 0 && fiveHour > 0 {
+		fmt.Printf("current account still has quota · keeping %s\n", activeResult.Account.Name)
+		return nil
+	}
+
+	candidates := make([]Account, 0, len(accounts)-1)
+	candidates = append(candidates, accounts[:active]...)
+	candidates = append(candidates, accounts[active+1:]...)
+	results := append([]UsageResult{activeResult}, fetchAllAutoUsage(p, candidates)...)
+	account, _, err := selectAutoAccount(results, st.ActiveID)
 	if err != nil {
 		return err
-	}
-	if keep {
-		fmt.Printf("current account still has quota · keeping %s\n", account.Name)
-		return nil
 	}
 	if err := switchAccount(p, account); err != nil {
 		return err
@@ -50,6 +61,32 @@ func handleAuto(p paths) error {
 	}
 	fmt.Println()
 	return nil
+}
+
+func fetchAutoUsage(p paths, account Account) UsageResult {
+	fiveHour, weekly, err := fetchUsagePair(p, account)
+	result := UsageResult{Account: account, Usage: weekly, FiveHour: fiveHour}
+	if err != nil {
+		result.Err = err.Error()
+	}
+	return result
+}
+
+func fetchAllAutoUsage(p paths, accounts []Account) []UsageResult {
+	results := make([]UsageResult, len(accounts))
+	sem := make(chan struct{}, usageConcurrency)
+	var wg sync.WaitGroup
+	for i := range accounts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = fetchAutoUsage(p, accounts[i])
+		}()
+	}
+	wg.Wait()
+	return results
 }
 
 func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, error) {

@@ -156,14 +156,18 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 		"acct-a": {weekly: 0, fiveHour: 0},
 		"acct-b": {weekly: 95, fiveHour: 90},
 	}
+	var usageCalls atomic.Int32
+	var resetCalls atomic.Int32
 	var starts atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/usage", func(w http.ResponseWriter, r *http.Request) {
+		usageCalls.Add(1)
 		q := quotas[r.Header.Get("ChatGPT-Account-Id")]
 		now := time.Now().Unix()
 		_, _ = fmt.Fprintf(w, `{"rate_limit":{"primary_window":{"used_percent":%g,"limit_window_seconds":18000,"reset_at":%d},"secondary_window":{"used_percent":%g,"limit_window_seconds":604800,"reset_at":%d}}}`, q.fiveHour, now+18000, q.weekly, now+604800)
 	})
 	mux.HandleFunc("/reset-credits", func(w http.ResponseWriter, _ *http.Request) {
+		resetCalls.Add(1)
 		_, _ = w.Write([]byte(`{"credits":[]}`))
 	})
 	mux.HandleFunc("/responses", func(http.ResponseWriter, *http.Request) {
@@ -194,6 +198,9 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	if err != nil || !strings.Contains(out, "keeping primary") {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
+	if usageCalls.Load() != 1 || resetCalls.Load() != 0 {
+		t.Fatalf("usage calls=%d reset calls=%d", usageCalls.Load(), resetCalls.Load())
+	}
 
 	quotas["acct-a"] = usage{weekly: 100, fiveHour: 80}
 	out = captureStdout(t, func() { err = handleAuto(p) })
@@ -206,5 +213,8 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	}
 	if starts.Load() != 0 {
 		t.Fatalf("window starts=%d", starts.Load())
+	}
+	if usageCalls.Load() != 3 || resetCalls.Load() != 0 {
+		t.Fatalf("usage calls=%d reset calls=%d", usageCalls.Load(), resetCalls.Load())
 	}
 }
