@@ -531,9 +531,10 @@ func dashboardTitle(v dashboardView) string {
 // accountBlock renders one account as the lines it occupies, so the frame can be
 // windowed by account instead of being cut at an arbitrary row.
 func accountBlock(v dashboardView, i int) []string {
-	const indent = "   "
+	selected := i == v.sel
+	indent := gutter(selected, 3)
 	r := v.results[i]
-	lines := []string{dashboardAccountHeader(v.state, r.Account, i == v.sel)}
+	lines := []string{dashboardAccountHeader(v.state, r.Account, selected)}
 	usage := func() {
 		for _, line := range usageLinesWidth(r, v.size.cols) {
 			lines = append(lines, indent+line)
@@ -594,19 +595,34 @@ const (
 	accountPlanCell = 10
 )
 
-func dashboardAccountHeader(st State, a Account, selected bool) string {
-	cursor := "  "
-	if selected {
-		cursor = cyan("› ")
+// The cursor is a bar drawn down the whole selected block rather than a caret on
+// its header row: every account is several lines tall, so a single marked row
+// left the eye guessing where the selection started and ended. gutter returns
+// the leading cells of one line of a block — the bar sits inside the frame's
+// left margin and is padded back out to width, so the columns to its right stay
+// aligned whether or not the account is selected.
+func gutter(selected bool, width int) string {
+	if !selected {
+		return strings.Repeat(" ", width)
 	}
+	return " " + cyan("▌") + strings.Repeat(" ", max(width-2, 0))
+}
+
+func dashboardAccountHeader(st State, a Account, selected bool) string {
 	active := dim("○")
 	if a.ID == st.ActiveID {
 		active = green("●")
 	}
+	// The selected account's name carries the highlight too, so the cursor is
+	// still readable where a terminal renders the bar faintly.
+	name := bold(a.Name)
+	if selected {
+		name = cyan(bold(a.Name))
+	}
 	var b strings.Builder
 	// Pad before styling: a width verb counts the escape bytes of an already
 	// colored string as characters, which silently shrinks the column.
-	fmt.Fprintf(&b, "%s%s %s", cursor, active, padStyled(bold(a.Name), a.Name, accountNameCell))
+	fmt.Fprintf(&b, "%s%s %s", gutter(selected, 2), active, padStyled(name, a.Name, accountNameCell))
 	// The plan cell keeps its width even when the account has no plan, so an
 	// account without one does not slide its email into the plan column.
 	if a.Plan != "" || a.Email != "" {
@@ -628,23 +644,29 @@ func writeFullFrame(frame string) {
 	_, _ = os.Stdout.WriteString(b.String())
 }
 
-// selectionUpdateString repaints just the two header rows a cursor move
-// touched. It returns "" whenever the absolute rows cannot be trusted — a frame
+// selectionUpdateString repaints just the two account blocks a cursor move
+// touched — the one that lost the gutter bar and the one that gained it. A block
+// keeps its line count whichever way it is drawn, so the rows below it do not
+// move. It returns "" whenever the absolute rows cannot be trusted — a frame
 // taller than the screen has scrolled, and a scrolled-out account has no row at
 // all — and the caller then redraws the whole frame instead.
 func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboardLayout) string {
 	rows := layout.headerRows
 	if !layout.fits || oldSel < 0 || newSel < 0 ||
-		oldSel >= len(v.accounts) || newSel >= len(v.accounts) ||
+		oldSel >= len(v.results) || newSel >= len(v.results) ||
 		oldSel >= len(rows) || newSel >= len(rows) ||
 		rows[oldSel] < 0 || rows[newSel] < 0 {
 		return ""
 	}
+	v.sel = newSel
 	var b strings.Builder
 	b.WriteString(syncOutputBegin)
 	for _, idx := range []int{oldSel, newSel} {
-		header := dashboardAccountHeader(v.state, v.accounts[idx], idx == newSel)
-		fmt.Fprintf(&b, "\x1b[%d;1H%s%s", rows[idx], eraseCurrentLine, fitCells(header, v.size.cols))
+		row := rows[idx]
+		for _, line := range accountBlock(v, idx) {
+			fmt.Fprintf(&b, "\x1b[%d;1H%s%s", row, eraseCurrentLine, fitCells(line, v.size.cols))
+			row++
+		}
 	}
 	b.WriteString(syncOutputEnd)
 	return b.String()
@@ -691,11 +713,12 @@ func renderAccountPicker(accounts []Account, sel int) string {
 	b.WriteString(bold(" Switch Codex account"))
 	b.WriteString("\n\n")
 	for i, a := range accounts {
-		c := "  "
-		if i == sel {
-			c = cyan("› ")
+		selected := i == sel
+		name := a.Name
+		if selected {
+			name = cyan(bold(a.Name))
 		}
-		fmt.Fprintf(&b, "%s%-18s %s\n", c, a.Name, dim(emptyDash(a.Email)))
+		fmt.Fprintf(&b, "%s%s %s\n", gutter(selected, 2), padStyled(name, a.Name, 18), dim(emptyDash(a.Email)))
 	}
 	b.WriteString("\n")
 	b.WriteString(dim(" ↑/↓ or j/k · enter switch · esc cancel"))

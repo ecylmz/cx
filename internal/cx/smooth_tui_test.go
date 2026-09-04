@@ -26,22 +26,31 @@ func TestZeroBankedResetsAreHidden(t *testing.T) {
 	}
 }
 
-func TestSelectionUpdateOnlyTouchesHeaderRows(t *testing.T) {
+func TestSelectionUpdateOnlyTouchesTheTwoAffectedBlocks(t *testing.T) {
 	oldColor := useColor
 	useColor = false
 	defer func() { useColor = oldColor }()
 
 	p := makeTestPaths(t)
-	accounts := []Account{{ID: "a", Name: "primary"}, {ID: "b", Name: "backup"}}
-	layout := dashboardLayout{headerRows: []int{3, 6}, fits: true}
-	v := newDashboardView(p, accounts, nil, 0)
+	accounts := []Account{{ID: "a", Name: "primary"}, {ID: "b", Name: "backup"}, {ID: "c", Name: "spare"}}
+	results := make([]UsageResult, len(accounts))
+	for i, a := range accounts {
+		results[i] = UsageResult{Account: a, Err: "offline"}
+	}
+	layout := dashboardLayout{headerRows: []int{3, 6, 9}, fits: true}
+	v := newDashboardView(p, accounts, results, 0)
 	update := selectionUpdateString(v, 0, 1, layout)
 	for _, want := range []string{syncOutputBegin, syncOutputEnd, "\x1b[3;1H", "\x1b[6;1H", "primary", "backup"} {
 		if !strings.Contains(update, want) {
 			t.Fatalf("selection update missing %q: %q", want, update)
 		}
 	}
-	if strings.Contains(update, "weekly") || strings.Contains(update, clearScreenHome) {
+	// The block that moved gains the cursor bar; the one that did not is left
+	// alone, and so is the rest of the screen.
+	if !strings.Contains(update, "▌") {
+		t.Fatalf("selection update does not draw the cursor bar: %q", update)
+	}
+	if strings.Contains(update, "spare") || strings.Contains(update, "\x1b[9;1H") || strings.Contains(update, clearScreenHome) {
 		t.Fatalf("selection update should not redraw the dashboard: %q", update)
 	}
 }

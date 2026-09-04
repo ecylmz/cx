@@ -55,11 +55,13 @@ func TestAccountHeaderColumnsAlignWhateverTheColorSetting(t *testing.T) {
 	for _, on := range []bool{false, true} {
 		useColor = on
 		for _, a := range accounts {
-			line := plain(dashboardAccountHeader(st, a, false))
-			if on {
-				withColor = append(withColor, line)
-			} else {
-				withoutColor = append(withoutColor, line)
+			for _, selected := range []bool{false, true} {
+				line := plain(dashboardAccountHeader(st, a, selected))
+				if on {
+					withColor = append(withColor, line)
+				} else {
+					withoutColor = append(withoutColor, line)
+				}
 			}
 		}
 	}
@@ -69,9 +71,24 @@ func TestAccountHeaderColumnsAlignWhateverTheColorSetting(t *testing.T) {
 		}
 	}
 	// An account without a plan must not slide its email into the plan column.
-	if got, want := strings.Index(withoutColor[2], "three@"), strings.Index(withoutColor[0], "one@"); got != want {
-		t.Fatalf("email column moved for a planless account: %d vs %d\n%q\n%q", got, want, withoutColor[0], withoutColor[2])
+	if got, want := cellIndex(withoutColor[4], "three@"), cellIndex(withoutColor[0], "one@"); got != want {
+		t.Fatalf("email column moved for a planless account: %d vs %d\n%q\n%q", got, want, withoutColor[0], withoutColor[4])
 	}
+	// The cursor bar takes the place of the leading spaces, so selecting an
+	// account must not shift the columns to its right.
+	if got, want := cellIndex(withoutColor[1], "one@"), cellIndex(withoutColor[0], "one@"); got != want {
+		t.Fatalf("the cursor bar moved the email column: %d vs %d\n%q\n%q", got, want, withoutColor[0], withoutColor[1])
+	}
+}
+
+// cellIndex reports the display column a substring starts at, which is not its
+// byte offset once a line carries a multi-byte glyph such as the cursor bar.
+func cellIndex(line, sub string) int {
+	i := strings.Index(line, sub)
+	if i < 0 {
+		return -1
+	}
+	return visibleCells(line[:i])
 }
 
 func TestMoveSelectionCoversEveryNavigationKey(t *testing.T) {
@@ -317,16 +334,45 @@ func TestBareEscKeepsTheKeyThatFollowsIt(t *testing.T) {
 
 func osPipeForTest() (*os.File, *os.File, error) { return os.Pipe() }
 
-// The dashboard indents one space deeper than cx status does.
+// The dashboard indents one space deeper than cx status does, and the selected
+// account spends the first of those cells on the cursor bar instead — the two
+// indents are the same width, so the columns line up down the whole list.
 func TestDashboardIndentsUsageLinesOneSpaceDeeperThanStatus(t *testing.T) {
 	old := useColor
 	useColor = false
 	defer func() { useColor = old }()
 
-	v := layoutTestView(t, 1, 0, termSize{rows: 40, cols: 120})
+	v := layoutTestView(t, 2, 1, termSize{rows: 40, cols: 120})
 	frame, _ := renderDashboardFrame(v)
 	if !strings.Contains(frame, "\n   weekly  ") {
 		t.Fatalf("dashboard usage line indentation changed:\n%s", frame)
+	}
+	if !strings.Contains(frame, "\n ▌ weekly  ") {
+		t.Fatalf("the selected account's block is not marked down its lines:\n%s", frame)
+	}
+}
+
+// The cursor marks every line of the selected account, so the selection cannot
+// be mistaken for a neighbouring block.
+func TestCursorBarSpansTheSelectedBlock(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	v := layoutTestView(t, 3, 1, termSize{rows: 40, cols: 120})
+	for i := range v.results {
+		marked := 0
+		for _, line := range accountBlock(v, i) {
+			if strings.HasPrefix(line, " ▌") {
+				marked++
+			}
+		}
+		if i == v.sel && marked < 2 {
+			t.Fatalf("selected block %d marked on %d lines", i, marked)
+		}
+		if i != v.sel && marked != 0 {
+			t.Fatalf("unselected block %d carries the cursor bar", i)
+		}
 	}
 }
 
