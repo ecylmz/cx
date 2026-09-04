@@ -3,6 +3,7 @@ package cx
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -63,7 +65,7 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 	var wg sync.WaitGroup
 	for i, a := range accounts {
 		wg.Add(1)
-		go func(i int, a Account) {
+		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -108,7 +110,7 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 				r.BankedErr = bankedErr.Error()
 			}
 			out[i] = r
-		}(i, a)
+		}()
 	}
 	wg.Wait()
 	return out
@@ -130,7 +132,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 			continue
 		}
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -163,7 +165,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 				}
 			}
 			results[i].Account = account
-		}(i)
+		}()
 	}
 	wg.Wait()
 	return results
@@ -234,11 +236,7 @@ func fiveHourMatchesWeeklyStart(a Account, weekly WeeklyUsage, fiveHour WeeklyUs
 	}
 	weeklyStart := time.Unix(weeklyReset, 0).Add(-time.Duration(weeklyMinutes) * time.Minute)
 	fiveHourStart := time.Unix(fiveHour.ResetsAt, 0).Add(-time.Duration(fiveHour.WindowMinutes) * time.Minute)
-	delta := weeklyStart.Sub(fiveHourStart)
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= 2*time.Minute
+	return weeklyStart.Sub(fiveHourStart).Abs() <= 2*time.Minute
 }
 
 func annotateWindowState(p paths, r *UsageResult) {
@@ -274,10 +272,7 @@ func resetMatchesKnown(knownReset, currentReset int64, now time.Time) bool {
 		return false
 	}
 	delta := knownReset - currentReset
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= 120
+	return max(delta, -delta) <= 120
 }
 
 func rememberWeeklyReset(p paths, a Account, resetAt int64) (Account, error) {
@@ -319,11 +314,6 @@ func fetchUsagePair(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
 		return fiveHour, weekly, nil
 	}
 	return nil, WeeklyUsage{}, fmt.Errorf("direct usage read: %v; app-server fallback: %w", directErr, appErr)
-}
-
-func fetchUsageViaAppServer(p paths, a Account) (WeeklyUsage, error) {
-	_, weekly, err := fetchUsagePairViaAppServer(p, a)
-	return weekly, err
 }
 
 func fetchUsagePairViaAppServer(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
@@ -445,30 +435,24 @@ func selectCodexRateWindows(rr rateResponse) (*rateWindow, *rateWindow, error) {
 	}
 
 	if weekly == nil {
-		candidate := windows[0]
-		for _, w := range windows[1:] {
-			if windowMinutes(w) > windowMinutes(candidate) {
-				candidate = w
-			}
-		}
-		if windowMinutes(candidate) >= 24*60 {
+		if candidate := slices.MaxFunc(windows, byWindowMinutes); windowMinutes(candidate) >= 24*60 {
 			weekly = candidate
 		}
 	}
 	if fiveHour == nil && len(windows) > 1 {
-		candidate := windows[0]
-		for _, w := range windows[1:] {
-			if windowMinutes(w) < windowMinutes(candidate) {
-				candidate = w
-			}
-		}
-		if candidate != weekly {
+		if candidate := slices.MinFunc(windows, byWindowMinutes); candidate != weekly {
 			fiveHour = candidate
 		}
 	} else if fiveHour == nil && len(windows) == 1 && windowMinutes(windows[0]) < 24*60 {
 		fiveHour = windows[0]
 	}
 	return fiveHour, weekly, nil
+}
+
+// byWindowMinutes orders rate-limit windows from the shortest to the longest
+// rolling window, which is how cx tells the 5-hour window from the weekly one.
+func byWindowMinutes(a, b *rateWindow) int {
+	return cmp.Compare(windowMinutes(a), windowMinutes(b))
 }
 
 func windowMinutes(w *rateWindow) int64 {
@@ -529,17 +513,5 @@ func selectWeeklyWindow(rr rateResponse) (*rateWindow, error) {
 	if len(ws) == 0 {
 		return nil, errors.New("server returned no rate-limit window")
 	}
-	best := ws[0]
-	score := func(w *rateWindow) int64 {
-		if w.WindowDurationMins == nil {
-			return 0
-		}
-		return *w.WindowDurationMins
-	}
-	for _, w := range ws[1:] {
-		if score(w) > score(best) {
-			best = w
-		}
-	}
-	return best, nil
+	return slices.MaxFunc(ws, byWindowMinutes), nil
 }

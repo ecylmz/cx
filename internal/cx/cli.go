@@ -177,11 +177,12 @@ func handleUse(p paths, args []string) {
 	resume := false
 	name := ""
 	for _, a := range args {
-		if a == "--resume" {
+		switch {
+		case a == "--resume":
 			resume = true
-		} else if name == "" {
+		case name == "":
 			name = a
-		} else {
+		default:
 			fatal(errors.New("usage: cx use [NAME] [--resume]"))
 		}
 	}
@@ -216,11 +217,12 @@ func handleStatus(p paths, args []string) int {
 	jsonOut := false
 	name := ""
 	for _, a := range args {
-		if a == "--json" {
+		switch {
+		case a == "--json":
 			jsonOut = true
-		} else if name == "" {
+		case name == "":
 			name = a
-		} else {
+		default:
 			fatal(errors.New("usage: cx status [NAME] [--json]"))
 		}
 	}
@@ -258,12 +260,12 @@ func handleStatus(p paths, args []string) int {
 	saveFreshCache(p, results)
 
 	if jsonOut {
-		payload := statusJSON(p, accounts, results)
+		payload := statusJSON(p, results)
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(payload)
 	} else {
-		printStatus(p, accounts, results)
+		printStatus(p, results)
 	}
 	if failed > 0 {
 		return 1

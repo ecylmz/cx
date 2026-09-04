@@ -4,7 +4,7 @@ import "testing"
 
 func TestQuotaPrimingNeededStartsFiveHourWhenWeeklyAlreadyStarted(t *testing.T) {
 	r := UsageResult{
-		Usage: WeeklyUsage{WindowMinutes: 10080, WindowStarted: true},
+		Usage:    WeeklyUsage{WindowMinutes: 10080, WindowStarted: true},
 		FiveHour: &WeeklyUsage{WindowMinutes: 300, WindowStarted: false},
 	}
 	needed, status := quotaPrimingNeeded(r)
@@ -18,7 +18,7 @@ func TestQuotaPrimingNeededStartsFiveHourWhenWeeklyAlreadyStarted(t *testing.T) 
 
 func TestQuotaPrimingNeededStartsBothWindows(t *testing.T) {
 	r := UsageResult{
-		Usage: WeeklyUsage{WindowMinutes: 10080, WindowStarted: false},
+		Usage:    WeeklyUsage{WindowMinutes: 10080, WindowStarted: false},
 		FiveHour: &WeeklyUsage{WindowMinutes: 300, WindowStarted: false},
 	}
 	needed, status := quotaPrimingNeeded(r)
@@ -29,7 +29,7 @@ func TestQuotaPrimingNeededStartsBothWindows(t *testing.T) {
 
 func TestQuotaPrimingNeededSkipsActiveWindows(t *testing.T) {
 	r := UsageResult{
-		Usage: WeeklyUsage{WindowMinutes: 10080, WindowStarted: true},
+		Usage:    WeeklyUsage{WindowMinutes: 10080, WindowStarted: true},
 		FiveHour: &WeeklyUsage{WindowMinutes: 300, WindowStarted: true},
 	}
 	needed, status := quotaPrimingNeeded(r)

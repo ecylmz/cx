@@ -1,12 +1,10 @@
 package cx
 
 import (
-	"context"
+	"cmp"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -39,41 +37,9 @@ type directResetCredit struct {
 }
 
 func fetchBankedResetsDirect(p paths, a Account) ([]BankedReset, error) {
-	token, accountID, err := directUsageCredentials(p, a)
+	body, err := backendGet(p, a, directResetCreditsEndpoint, "banked reset")
 	if err != nil {
 		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), directUsageTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, directResetCreditsEndpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("ChatGPT-Account-Id", accountID)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("User-Agent", "codex-cli")
-
-	resp, err := directUsageHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("banked reset request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read banked reset response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(body))
-		if len(msg) > 240 {
-			msg = msg[:240]
-		}
-		if msg != "" {
-			return nil, fmt.Errorf("banked reset endpoint returned HTTP %d: %s", resp.StatusCode, msg)
-		}
-		return nil, fmt.Errorf("banked reset endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	var payload directResetCreditsPayload
@@ -95,18 +61,18 @@ func fetchBankedResetsDirect(p paths, a Account) ([]BankedReset, error) {
 			Description: stringValue(c.Description),
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		ti, iok := bankedExpiry(out[i].ExpiresAt)
-		tj, jok := bankedExpiry(out[j].ExpiresAt)
+	slices.SortStableFunc(out, func(x, y BankedReset) int {
+		tx, xok := bankedExpiry(x.ExpiresAt)
+		ty, yok := bankedExpiry(y.ExpiresAt)
 		switch {
-		case iok && jok:
-			return ti.Before(tj)
-		case iok:
-			return true
-		case jok:
-			return false
+		case xok && yok:
+			return tx.Compare(ty)
+		case xok:
+			return -1
+		case yok:
+			return 1
 		default:
-			return out[i].ID < out[j].ID
+			return cmp.Compare(x.ID, y.ID)
 		}
 	})
 	return out, nil

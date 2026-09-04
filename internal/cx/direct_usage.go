@@ -1,12 +1,14 @@
 package cx
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -43,17 +45,20 @@ func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
 	return weekly, err
 }
 
-func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
+// backendGet performs one authenticated GET against a ChatGPT backend endpoint
+// with the account's own credential and returns the bounded response body.
+// label prefixes every error it reports, so each caller keeps its own wording.
+func backendGet(p paths, a Account, endpoint, label string) ([]byte, error) {
 	token, accountID, err := directUsageCredentials(p, a)
 	if err != nil {
-		return nil, WeeklyUsage{}, err
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), directUsageTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, directUsageEndpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, WeeklyUsage{}, err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("ChatGPT-Account-Id", accountID)
@@ -63,22 +68,33 @@ func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error)
 
 	resp, err := directUsageHTTPClient.Do(req)
 	if err != nil {
-		return nil, WeeklyUsage{}, fmt.Errorf("usage request: %w", err)
+		return nil, fmt.Errorf("%s request: %w", label, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, WeeklyUsage{}, fmt.Errorf("read usage response: %w", err)
+		return nil, fmt.Errorf("read %s response: %w", label, err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if !httpSuccess(resp.StatusCode) {
 		msg := strings.TrimSpace(string(body))
 		if len(msg) > 240 {
 			msg = msg[:240]
 		}
 		if msg != "" {
-			return nil, WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d: %s", resp.StatusCode, msg)
+			return nil, fmt.Errorf("%s endpoint returned HTTP %d: %s", label, resp.StatusCode, msg)
 		}
-		return nil, WeeklyUsage{}, fmt.Errorf("usage endpoint returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%s endpoint returned HTTP %d", label, resp.StatusCode)
+	}
+	return body, nil
+}
+
+// httpSuccess reports whether a status code is in the 2xx range.
+func httpSuccess(status int) bool { return status >= 200 && status < 300 }
+
+func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
+	body, err := backendGet(p, a, directUsageEndpoint, "usage")
+	if err != nil {
+		return nil, WeeklyUsage{}, err
 	}
 
 	var payload directUsagePayload
@@ -143,24 +159,12 @@ func selectDirectCodexWindows(payload directUsagePayload) (*directRateWindow, *d
 	}
 
 	if weekly == nil {
-		weekly = windows[0]
-		for _, w := range windows[1:] {
-			if w.LimitWindowSeconds > weekly.LimitWindowSeconds {
-				weekly = w
-			}
-		}
-		if weekly.LimitWindowSeconds < 24*60*60 {
-			weekly = nil
+		if candidate := slices.MaxFunc(windows, byWindowSeconds); candidate.LimitWindowSeconds >= 24*60*60 {
+			weekly = candidate
 		}
 	}
 	if fiveHour == nil && len(windows) > 1 {
-		candidate := windows[0]
-		for _, w := range windows[1:] {
-			if w.LimitWindowSeconds < candidate.LimitWindowSeconds {
-				candidate = w
-			}
-		}
-		if candidate != weekly {
+		if candidate := slices.MinFunc(windows, byWindowSeconds); candidate != weekly {
 			fiveHour = candidate
 		}
 	} else if fiveHour == nil && len(windows) == 1 && windows[0].LimitWindowSeconds < 24*60*60 {
@@ -215,11 +219,11 @@ func selectDirectWeeklyWindow(payload directUsagePayload) (*directRateWindow, er
 	if len(windows) == 0 {
 		return nil, errors.New("usage endpoint returned no rate-limit window")
 	}
-	best := windows[0]
-	for _, w := range windows[1:] {
-		if w.LimitWindowSeconds > best.LimitWindowSeconds {
-			best = w
-		}
-	}
-	return best, nil
+	return slices.MaxFunc(windows, byWindowSeconds), nil
+}
+
+// byWindowSeconds orders rate-limit windows from the shortest to the longest
+// rolling window, which is how cx tells the 5-hour window from the weekly one.
+func byWindowSeconds(a, b *directRateWindow) int {
+	return cmp.Compare(a.LimitWindowSeconds, b.LimitWindowSeconds)
 }

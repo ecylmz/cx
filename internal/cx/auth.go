@@ -112,6 +112,28 @@ func installAuth(src, dst string) error {
 	return atomicWrite(dst, b, 0600)
 }
 
+// linkPointsInto reports whether the symlink at link resolves to a path inside
+// root. It is how cx tells its own auth.json symlink from a foreign one, and
+// treats an unreadable link as not managed.
+func linkPointsInto(link, root string) bool {
+	target, err := os.Readlink(link)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(link), target)
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(abs, absRoot+string(os.PathSeparator))
+}
+
 func installManagedAuthLink(p paths, live string, a Account) error {
 	if err := os.MkdirAll(filepath.Dir(live), 0700); err != nil {
 		return err
@@ -119,14 +141,7 @@ func installManagedAuthLink(p paths, live string, a Account) error {
 	info, err := os.Lstat(live)
 	if err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			target, _ := os.Readlink(live)
-			abs := target
-			if !filepath.IsAbs(abs) {
-				abs = filepath.Join(filepath.Dir(live), target)
-			}
-			abs, _ = filepath.Abs(abs)
-			root, _ := filepath.Abs(p.AccountsRoot)
-			if !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+			if !linkPointsInto(live, p.AccountsRoot) {
 				return fmt.Errorf("%s is a symlink not managed by cx; refusing to replace it", live)
 			}
 		} else {
@@ -142,7 +157,7 @@ func installManagedAuthLink(p paths, live string, a Account) error {
 		return err
 	}
 
-	tmp := live + fmt.Sprintf(".cx-%d", time.Now().UnixNano())
+	tmp := fmt.Sprintf("%s.cx-%d", live, time.Now().UnixNano())
 	_ = os.Remove(tmp)
 	if err := os.Symlink(p.accountAuth(a.ID), tmp); err != nil {
 		return err

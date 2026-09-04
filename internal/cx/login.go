@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -73,48 +74,33 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 	if err != nil {
 		return Account{}, err
 	}
-	for _, existing := range accounts {
-		if sameStoredIdentity(existing, ident) {
-			return Account{}, fmt.Errorf(
-				"account is already managed as %s (%s); choose a different ChatGPT account",
-				existing.Name,
-				emptyDash(existing.Email),
-			)
-		}
+	if i := slices.IndexFunc(accounts, func(a Account) bool { return sameStoredIdentity(a, ident) }); i >= 0 {
+		return Account{}, fmt.Errorf(
+			"account is already managed as %s (%s); choose a different ChatGPT account",
+			accounts[i].Name,
+			emptyDash(accounts[i].Email),
+		)
 	}
 
+	nameTaken := func(candidate string) bool {
+		return slices.ContainsFunc(accounts, func(a Account) bool { return strings.EqualFold(a.Name, candidate) })
+	}
 	name := strings.TrimSpace(requestedName)
 	if name == "" {
 		name = "account"
-		if ident.Email != "" {
-			if i := strings.IndexByte(ident.Email, '@'); i > 0 {
-				name = ident.Email[:i]
-			}
+		if local, _, ok := strings.Cut(ident.Email, "@"); ok && local != "" {
+			name = local
 		}
 		base := name
-		n := 2
-		for {
-			collision := false
-			for _, a := range accounts {
-				if strings.EqualFold(a.Name, name) {
-					collision = true
-					break
-				}
-			}
-			if !collision {
-				break
-			}
+		for n := 2; nameTaken(name); n++ {
 			name = fmt.Sprintf("%s-%d", base, n)
-			n++
 		}
 	}
 	if err := validateName(name); err != nil {
 		return Account{}, err
 	}
-	for _, a := range accounts {
-		if strings.EqualFold(a.Name, name) {
-			return Account{}, fmt.Errorf("account name already exists: %s", name)
-		}
+	if nameTaken(name) {
+		return Account{}, fmt.Errorf("account name already exists: %s", name)
 	}
 
 	finalDir := p.accountDir(id)

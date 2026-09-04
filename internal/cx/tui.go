@@ -40,7 +40,7 @@ func runDashboard(p paths) error {
 		results := fetchAllUsageWithPriming(p, accounts)
 		applyCachedUsageFallback(p, results)
 		saveFreshCache(p, results)
-		printStatus(p, accounts, results)
+		printStatus(p, results)
 		return nil
 	}
 
@@ -87,6 +87,9 @@ func runDashboard(p paths) error {
 				return err
 			}
 			accounts, _ = listAccounts(p)
+			if len(accounts) == 0 {
+				return nil
+			}
 			sel = 0
 			continue
 		}
@@ -148,15 +151,9 @@ func applyCachedUsageFallback(p paths, results []UsageResult) {
 	}
 }
 
-func drawCachedDashboard(p paths, accounts []Account, sel int) {
-	results := initialRefreshingResults(p, accounts)
-	frame, _ := renderDashboardFrame(p, accounts, results, sel, refreshFooter(0, len(accounts)))
-	writeFullFrame(frame)
-}
-
 func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) (int, string, error) {
 	if !isTerminal() {
-		printStatus(p, accounts, results)
+		printStatus(p, results)
 		return sel, "quit", nil
 	}
 	old, err := beginTerminalSession()
@@ -169,6 +166,11 @@ func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) 
 }
 
 func dashboardInputLoop(p paths, accounts []Account, sel int, layout dashboardLayout) (int, string, error) {
+	// Every return from here runs an action or leaves the screen. Keystrokes
+	// typed ahead of that were meant for the screen being left, not for a
+	// repeat of the action, so drop them the way a fresh reader per keypress
+	// used to. Navigation inside the loop still keeps every key.
+	defer discardPendingKeys()
 	for {
 		key, err := readKey()
 		if err != nil {
@@ -177,13 +179,9 @@ func dashboardInputLoop(p paths, accounts []Account, sel int, layout dashboardLa
 		oldSel := sel
 		switch key {
 		case "up", "k":
-			if sel > 0 {
-				sel--
-			}
+			sel = max(sel-1, 0)
 		case "down", "j":
-			if sel < len(accounts)-1 {
-				sel++
-			}
+			sel = min(sel+1, max(len(accounts)-1, 0))
 		case "enter":
 			return sel, "switch", nil
 		case "r":
@@ -224,22 +222,14 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 		row++
 
 		if refreshing, note := refreshingStatus(r.Err); refreshing {
-			lines := usageLines(r)
-			for _, line := range lines {
-				b.WriteString("   " + line[2:] + "\n")
-			}
-			row += len(lines)
+			row += writeDashboardUsageLines(&b, r)
 			if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
 				note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
 			}
 			fmt.Fprintf(&b, "   %s\n", cyan(note))
 			row++
 		} else if r.Err == "" {
-			lines := usageLines(r)
-			for _, line := range lines {
-				b.WriteString("   " + line[2:] + "\n")
-			}
-			row += len(lines)
+			row += writeDashboardUsageLines(&b, r)
 			if r.PrimeErr != "" {
 				fmt.Fprintf(&b, "   %s %s\n", red("window start failed"), r.PrimeErr)
 				row++
@@ -251,12 +241,9 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 				row++
 			}
 		} else if !r.Usage.FetchedAt.IsZero() {
-			lines := usageLines(r)
-			for _, line := range lines {
-				b.WriteString("   " + line[2:] + "\n")
-			}
+			row += writeDashboardUsageLines(&b, r)
 			fmt.Fprintf(&b, "   %s · cached %s ago\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)))
-			row += len(lines) + 1
+			row++
 		} else {
 			fmt.Fprintf(&b, "   %s %s\n", red("unavailable"), r.Err)
 			row++
@@ -274,6 +261,17 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 	b.WriteString(dim(" " + footer))
 	b.WriteByte('\n')
 	return b.String(), layout
+}
+
+// writeDashboardUsageLines re-indents the shared status usage lines for the
+// dashboard, which carries one more leading space than cx status, and reports
+// how many rows it wrote.
+func writeDashboardUsageLines(b *strings.Builder, r UsageResult) int {
+	lines := usageLines(r)
+	for _, line := range lines {
+		b.WriteString("   " + strings.TrimPrefix(line, "  ") + "\n")
+	}
+	return len(lines)
 }
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
@@ -343,6 +341,7 @@ func pickAccount(p paths) (Account, error) {
 		return Account{}, err
 	}
 	defer endTerminalSession(old)
+	defer discardPendingKeys()
 	sel := 0
 	for {
 		writeFullFrame(renderAccountPicker(accounts, sel))
@@ -352,13 +351,9 @@ func pickAccount(p paths) (Account, error) {
 		}
 		switch k {
 		case "up", "k":
-			if sel > 0 {
-				sel--
-			}
+			sel = max(sel-1, 0)
 		case "down", "j":
-			if sel < len(accounts)-1 {
-				sel++
-			}
+			sel = min(sel+1, max(len(accounts)-1, 0))
 		case "enter":
 			return accounts[sel], nil
 		case "esc", "q":
@@ -441,8 +436,36 @@ func restoreMode(old string) {
 	_ = cmd.Run()
 }
 
+var (
+	keyReaderSource *os.File
+	keyReaderBuf    *bufio.Reader
+)
+
+// keyReader returns the buffered reader for the current os.Stdin. Reusing it
+// across calls keeps the bytes a single read pulled in past the first keypress,
+// which a fresh reader per call would discard; it is rebound when os.Stdin
+// itself changes.
+func keyReader() *bufio.Reader {
+	if keyReaderBuf == nil || keyReaderSource != os.Stdin {
+		keyReaderSource = os.Stdin
+		keyReaderBuf = bufio.NewReader(os.Stdin)
+	}
+	return keyReaderBuf
+}
+
+// discardPendingKeys drops terminal input that arrived but has not been read
+// yet. It is called when leaving an input loop, so that keys typed ahead of an
+// action cannot replay it — switching writes the auth.json symlink and
+// refreshing costs a full round of network reads.
+func discardPendingKeys() {
+	r := keyReader()
+	if n := r.Buffered(); n > 0 {
+		_, _ = r.Discard(n)
+	}
+}
+
 func readKey() (string, error) {
-	r := bufio.NewReader(os.Stdin)
+	r := keyReader()
 	b, err := r.ReadByte()
 	if err != nil {
 		return "", err

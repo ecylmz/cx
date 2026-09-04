@@ -47,32 +47,26 @@ func quotaColor(left float64, s string) string {
 	return green(s)
 }
 func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+	return min(max(v, lo), hi)
+}
+
+// barCells splits a percentage into the filled and empty halves of a meter, so
+// the plain and the dimmed variant stay pixel-identical.
+func barCells(percent float64, width int) (filled, empty string) {
+	n := int(math.Round(clamp(percent, 0, 100) / 100 * float64(width)))
+	return strings.Repeat("█", n), strings.Repeat("░", width-n)
 }
 func bar(percent float64, width int) string {
-	percent = clamp(percent, 0, 100)
-	n := int(math.Round(percent / 100 * float64(width)))
-	return strings.Repeat("█", n) + strings.Repeat("░", width-n)
+	filled, empty := barCells(percent, width)
+	return filled + empty
 }
 func quotaBar(left float64, width int) string {
-	left = clamp(left, 0, 100)
-	n := int(math.Round(left / 100 * float64(width)))
-	return strings.Repeat("█", n) + dim(strings.Repeat("░", width-n))
+	filled, empty := barCells(left, width)
+	return filled + dim(empty)
 }
 func normalizeLocale(v string) string {
-	v = strings.TrimSpace(v)
-	if i := strings.IndexByte(v, '.'); i >= 0 {
-		v = v[:i]
-	}
-	if i := strings.IndexByte(v, '@'); i >= 0 {
-		v = v[:i]
-	}
+	v, _, _ = strings.Cut(strings.TrimSpace(v), ".")
+	v, _, _ = strings.Cut(v, "@")
 	return strings.ToLower(strings.ReplaceAll(v, "-", "_"))
 }
 
@@ -134,9 +128,7 @@ func resetText(epoch int64, now time.Time) string {
 }
 
 func relativeDuration(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	days := int(d / (24 * time.Hour))
 	hours := int(d/time.Hour) % 24
 	mins := int(d/time.Minute) % 60
@@ -153,9 +145,7 @@ func relativeDuration(d time.Duration) string {
 }
 
 func shortDuration(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d/time.Second))
 	}
@@ -254,16 +244,14 @@ func bankedResetLines(r UsageResult, indent string) []string {
 	return lines
 }
 
-func printStatus(p paths, accounts []Account, results []UsageResult) {
+func printStatus(p paths, results []UsageResult) {
 	st, _ := loadState(p)
 	fmt.Println(bold("cx status"))
 	fmt.Println()
 	for i, r := range results {
-		marker := " "
+		marker := dim("○")
 		if r.Account.ID == st.ActiveID {
 			marker = green("●")
-		} else {
-			marker = dim("○")
 		}
 		fmt.Printf("%s %s", marker, bold(r.Account.Name))
 		if r.Account.Plan != "" {
@@ -314,7 +302,7 @@ type jsonAccountStatus struct {
 	BankedResetError string        `json:"banked_reset_error,omitempty"`
 }
 
-func statusJSON(p paths, accounts []Account, results []UsageResult) any {
+func statusJSON(p paths, results []UsageResult) any {
 	st, _ := loadState(p)
 	out := make([]jsonAccountStatus, 0, len(results))
 	for _, r := range results {

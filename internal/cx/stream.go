@@ -35,7 +35,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 
 	for i, a := range accounts {
 		wg.Add(1)
-		go func(i int, a Account) {
+		go func() {
 			defer wg.Done()
 
 			usageSem <- struct{}{}
@@ -96,7 +96,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			}
 			r.Account = account
 			updates <- usageUpdate{Index: i, Result: r, Final: true}
-		}(i, a)
+		}()
 	}
 
 	go func() {

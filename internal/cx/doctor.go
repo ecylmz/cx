@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -56,13 +55,7 @@ func doctor(p paths) error {
 	live := p.sharedAuthPath()
 	if info, err := os.Lstat(live); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			target, _ := os.Readlink(live)
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(live), target)
-			}
-			root, _ := filepath.Abs(p.AccountsRoot)
-			target, _ = filepath.Abs(target)
-			if strings.HasPrefix(target, root+string(os.PathSeparator)) {
+			if linkPointsInto(live, p.AccountsRoot) {
 				fmt.Printf("%s active auth symlink: managed\n", green("✓"))
 			} else {
 				fmt.Printf("%s active auth symlink: unmanaged\n", red("✗"))

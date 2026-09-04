@@ -121,13 +121,13 @@ func TestUsageLinePrintStatusAndJSON(t *testing.T) {
 	}
 	accounts := []Account{{ID: "a", Name: "primary", Plan: "plus", Email: "a@example.com"}, {ID: "b", Name: "backup"}}
 	results := []UsageResult{{Account: accounts[0], Usage: u}, {Account: accounts[1], Usage: WeeklyUsage{FetchedAt: now, WindowStarted: true}, Err: "offline"}}
-	out := captureStdout(t, func() { printStatus(p, accounts, results) })
+	out := captureStdout(t, func() { printStatus(p, results) })
 	for _, want := range []string{"cx status", "primary", "75.0% left", "stale", "offline"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
 	}
-	payload := statusJSON(p, accounts, results).(map[string]any)
+	payload := statusJSON(p, results).(map[string]any)
 	if payload["version"] != Version {
 		t.Fatalf("version=%v", payload["version"])
 	}
@@ -148,7 +148,7 @@ func TestExhaustedWindowStartStaysOneQuietLine(t *testing.T) {
 		PrimeSkipped: skipped,
 	}
 
-	out := captureStdout(t, func() { printStatus(p, []Account{a}, []UsageResult{r}) })
+	out := captureStdout(t, func() { printStatus(p, []UsageResult{r}) })
 	if strings.Contains(out, "window start failed") {
 		t.Fatalf("an exhausted account must not be reported as a failure:\n%s", out)
 	}

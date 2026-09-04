@@ -1,6 +1,7 @@
 package cx
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -8,7 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -113,17 +114,18 @@ func listAccounts(p paths) ([]Account, error) {
 		}
 		out = append(out, a)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].LastUsedAt != nil && out[j].LastUsedAt != nil {
-			return out[i].LastUsedAt.After(*out[j].LastUsedAt)
+	// Most recently used first, then never-used accounts by name.
+	slices.SortFunc(out, func(x, y Account) int {
+		switch {
+		case x.LastUsedAt != nil && y.LastUsedAt != nil:
+			return y.LastUsedAt.Compare(*x.LastUsedAt)
+		case x.LastUsedAt != nil:
+			return -1
+		case y.LastUsedAt != nil:
+			return 1
+		default:
+			return cmp.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name))
 		}
-		if out[i].LastUsedAt != nil {
-			return true
-		}
-		if out[j].LastUsedAt != nil {
-			return false
-		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
 	return out, nil
 }
@@ -198,32 +200,40 @@ func validateName(name string) error {
 	if name == "" {
 		return errors.New("account name cannot be empty")
 	}
-	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
-			return errors.New("account name may contain only letters, digits, dot, dash, underscore")
+	if strings.ContainsFunc(name, func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return false
+		case r == '-', r == '_', r == '.':
+			return false
+		default:
+			return true
 		}
+	}) {
+		return errors.New("account name may contain only letters, digits, dot, dash, underscore")
 	}
 	return nil
 }
 
-func renameAccount(p paths, old, new string) error {
-	if err := validateName(new); err != nil {
+func renameAccount(p paths, selector, newName string) error {
+	if err := validateName(newName); err != nil {
 		return err
 	}
+	newName = strings.TrimSpace(newName)
 	as, err := listAccounts(p)
 	if err != nil {
 		return err
 	}
-	target, err := findIn(as, old)
+	target, err := findIn(as, selector)
 	if err != nil {
 		return err
 	}
-	for _, a := range as {
-		if a.ID != target.ID && strings.EqualFold(a.Name, new) {
-			return fmt.Errorf("account name already exists: %s", new)
-		}
+	if slices.ContainsFunc(as, func(a Account) bool {
+		return a.ID != target.ID && strings.EqualFold(a.Name, newName)
+	}) {
+		return fmt.Errorf("account name already exists: %s", newName)
 	}
-	target.Name = new
+	target.Name = newName
 	target.UpdatedAt = time.Now()
 	return writeJSON(p.accountMeta(target.ID), target)
 }

@@ -87,7 +87,7 @@ func (d updateDisplay) downloadAsset(ctx context.Context, token string, assetID 
 		return downloadReleaseAsset(ctx, token, assetID)
 	}
 	fmt.Fprintf(d.out, "%s downloading %s\n", cyan("↓"), name)
-	lastDraw := time.Time{}
+	var lastDraw time.Time
 	payload, err := downloadReleaseAssetWithProgress(ctx, token, assetID, func(downloaded, total int64, elapsed time.Duration, done bool) {
 		now := time.Now()
 		if !done && !lastDraw.IsZero() && now.Sub(lastDraw) < 80*time.Millisecond {
@@ -105,20 +105,14 @@ func (d updateDisplay) downloadAsset(ctx context.Context, token string, assetID 
 }
 
 func downloadProgressLine(downloaded, total int64, elapsed time.Duration) string {
-	speed := float64(0)
+	var speed float64
 	if elapsed > 0 {
 		speed = float64(downloaded) / elapsed.Seconds()
 	}
 	if total <= 0 {
 		return fmt.Sprintf("  %s downloaded  %s/s", formatBytes(downloaded), formatBytes(int64(speed)))
 	}
-	fraction := float64(downloaded) / float64(total)
-	if fraction < 0 {
-		fraction = 0
-	}
-	if fraction > 1 {
-		fraction = 1
-	}
+	fraction := min(max(float64(downloaded)/float64(total), 0), 1)
 	filled := int(fraction*progressBarWidth + 0.5)
 	bar := cyan(strings.Repeat("█", filled)) + dim(strings.Repeat("░", progressBarWidth-filled))
 	pct := int(fraction*100 + 0.5)
@@ -126,9 +120,7 @@ func downloadProgressLine(downloaded, total int64, elapsed time.Duration) string
 }
 
 func formatBytes(n int64) string {
-	if n < 0 {
-		n = 0
-	}
+	n = max(n, 0)
 	const (
 		kib = int64(1 << 10)
 		mib = int64(1 << 20)

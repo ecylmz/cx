@@ -129,14 +129,14 @@ func startQuotaWindow(ctx context.Context, token, accountID, model string) error
 
 	resp, err := primeHTTPClient.Do(req)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return errors.New("window start timed out")
 		}
 		return fmt.Errorf("window start request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if !httpSuccess(resp.StatusCode) {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		msg := errorMessageFromBody(raw)
 		if quotaExhausted(resp.StatusCode, "", msg) {
@@ -208,7 +208,7 @@ func readPrimeStream(ctx context.Context, body io.Reader) error {
 		}
 	}
 	if err := scanner.Err(); err != nil && !started {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return errors.New("window start timed out")
 		}
 		return fmt.Errorf("read window start stream: %w", err)
@@ -256,11 +256,12 @@ func errorMessageFromBody(raw []byte) string {
 // layout as well as flood the screen.
 func singleLine(s string) string {
 	out := strings.Join(strings.Fields(s), " ")
-	const max = 160
-	if len([]rune(out)) <= max {
+	const limit = 160
+	runes := []rune(out)
+	if len(runes) <= limit {
 		return out
 	}
-	return string([]rune(out)[:max-1]) + "…"
+	return string(runes[:limit-1]) + "…"
 }
 
 type codexModel struct {
@@ -346,7 +347,7 @@ func fetchCodexModels(ctx context.Context, token, accountID, clientVersion strin
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if !httpSuccess(resp.StatusCode) {
 		return nil, fmt.Errorf("model catalog returned HTTP %d", resp.StatusCode)
 	}
 	var payload codexModelsPayload

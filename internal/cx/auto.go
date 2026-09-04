@@ -3,6 +3,7 @@ package cx
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -22,13 +23,7 @@ func handleAuto(p paths) error {
 	if err != nil {
 		return err
 	}
-	active := -1
-	for i := range accounts {
-		if accounts[i].ID == st.ActiveID {
-			active = i
-			break
-		}
-	}
+	active := slices.IndexFunc(accounts, func(a Account) bool { return a.ID == st.ActiveID })
 	if active < 0 {
 		return errors.New("no active account; select one with: cx use NAME")
 	}
@@ -43,9 +38,7 @@ func handleAuto(p paths) error {
 		return nil
 	}
 
-	candidates := make([]Account, 0, len(accounts)-1)
-	candidates = append(candidates, accounts[:active]...)
-	candidates = append(candidates, accounts[active+1:]...)
+	candidates := slices.Concat(accounts[:active], accounts[active+1:])
 	results := append([]UsageResult{activeResult}, fetchAllAutoUsage(p, candidates)...)
 	account, _, err := selectAutoAccount(results, st.ActiveID)
 	if err != nil {
@@ -90,13 +83,7 @@ func fetchAllAutoUsage(p paths, accounts []Account) []UsageResult {
 }
 
 func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, error) {
-	active := -1
-	for i := range results {
-		if results[i].Account.ID == activeID {
-			active = i
-			break
-		}
-	}
+	active := slices.IndexFunc(results, func(r UsageResult) bool { return r.Account.ID == activeID })
 	if active < 0 {
 		return Account{}, false, errors.New("no active account; select one with: cx use NAME")
 	}
