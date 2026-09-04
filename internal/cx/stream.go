@@ -61,7 +61,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			err := primeWeeklyWindow(p, r.Account)
 			<-primeSem
 			if err != nil {
-				r.PrimeErr = err.Error()
+				r.PrimeErr, r.PrimeSkipped = classifyPrimeFailure(err)
 				updates <- usageUpdate{Index: i, Result: r, Final: true}
 				return
 			}
@@ -70,7 +70,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			fiveHour, weekly, err := fetchUsagePair(p, r.Account)
 			<-usageSem
 			if err != nil {
-				r.PrimeErr = "window-start turn succeeded, but quota refresh failed: " + err.Error()
+				r.PrimeErr = singleLine("window-start turn succeeded, but quota refresh failed: " + err.Error())
 				updates <- usageUpdate{Index: i, Result: r, Final: true}
 				return
 			}

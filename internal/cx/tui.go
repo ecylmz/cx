@@ -243,6 +243,9 @@ func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, se
 			if r.PrimeErr != "" {
 				fmt.Fprintf(&b, "   %s %s\n", red("window start failed"), r.PrimeErr)
 				row++
+			} else if r.PrimeSkipped != "" {
+				b.WriteString("   " + dim("window not started · "+r.PrimeSkipped) + "\n")
+				row++
 			} else if r.Primed {
 				b.WriteString("   " + dim("quota windows started just now") + "\n")
 				row++

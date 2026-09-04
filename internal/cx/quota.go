@@ -27,6 +27,7 @@ type UsageResult struct {
 	FiveHour     *WeeklyUsage
 	Err          string
 	PrimeErr     string
+	PrimeSkipped string
 	Primed       bool
 	BankedResets []BankedReset
 	BankedErr    string
@@ -134,12 +135,12 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := primeWeeklyWindow(p, results[i].Account); err != nil {
-				results[i].PrimeErr = err.Error()
+				results[i].PrimeErr, results[i].PrimeSkipped = classifyPrimeFailure(err)
 				return
 			}
 			fiveHour, weekly, err := fetchUsagePair(p, results[i].Account)
 			if err != nil {
-				results[i].PrimeErr = "window-start turn succeeded, but quota refresh failed: " + err.Error()
+				results[i].PrimeErr = singleLine("window-start turn succeeded, but quota refresh failed: " + err.Error())
 				return
 			}
 			weekly.WindowStarted = true
@@ -166,6 +167,20 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	}
 	wg.Wait()
 	return results
+}
+
+// classifyPrimeFailure splits a window-start failure into a real error and the
+// expected "there is no quota left to spend" case. An exhausted account cannot
+// start a window until it resets, so reporting that in red every refresh is
+// noise, not information.
+func classifyPrimeFailure(err error) (primeErr, skipped string) {
+	if err == nil {
+		return "", ""
+	}
+	if errors.Is(err, errQuotaExhausted) {
+		return "", "usage limit reached · starts after reset"
+	}
+	return singleLine(err.Error()), ""
 }
 
 func annotateFiveHourWindowState(p paths, r *UsageResult) {

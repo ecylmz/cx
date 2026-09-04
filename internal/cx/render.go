@@ -279,6 +279,8 @@ func printStatus(p paths, accounts []Account, results []UsageResult) {
 			}
 			if r.PrimeErr != "" {
 				fmt.Printf("  %s · %s\n", red("window start failed"), r.PrimeErr)
+			} else if r.PrimeSkipped != "" {
+				fmt.Printf("  %s\n", dim("window not started · "+r.PrimeSkipped))
 			} else if r.Primed {
 				fmt.Println(dim("  live · quota windows started just now"))
 			} else {
