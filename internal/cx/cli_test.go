@@ -130,3 +130,32 @@ func TestMainVersion(t *testing.T) {
 		t.Fatalf("version out=%q", out)
 	}
 }
+
+func TestHandleInitReportsAdoptionAndNoop(t *testing.T) {
+	p := makeTestPaths(t)
+
+	out := captureStdout(t, func() { handleInit(p) })
+	if !strings.Contains(out, "no existing Codex login") || !strings.Contains(out, "cx add NAME") {
+		t.Fatalf("init on unauthorized system=%q", out)
+	}
+
+	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "me@example.com"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() { handleInit(p) })
+	if !strings.Contains(out, "primary") || !strings.Contains(out, "me@example.com") {
+		t.Fatalf("init adoption=%q", out)
+	}
+
+	out = captureStdout(t, func() { handleInit(p) })
+	if !strings.Contains(out, "already manages accounts") {
+		t.Fatalf("repeat init=%q", out)
+	}
+	accounts, err := listAccounts(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts=%+v", accounts)
+	}
+}
