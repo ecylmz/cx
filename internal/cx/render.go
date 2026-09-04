@@ -196,11 +196,15 @@ func localeName() string {
 	return ""
 }
 
+// localDateLayout picks the date order the locale expects. The clock is 24-hour
+// everywhere, including en_US: these timestamps sit next to relative countdowns
+// in a dense column, and "3:04 PM" reads slower and takes more room than "15:04"
+// without telling the reader anything more.
 func localDateLayout(locale string) string {
 	locale = normalizeLocale(locale)
 	switch {
 	case strings.HasPrefix(locale, "en_us"):
-		return "01/02/2006 3:04 PM"
+		return "01/02/2006 15:04"
 	case strings.HasPrefix(locale, "en_ca"):
 		return "2006-01-02 15:04"
 	case strings.HasPrefix(locale, "ja"), strings.HasPrefix(locale, "ko"), strings.HasPrefix(locale, "zh"):

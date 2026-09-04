@@ -10,7 +10,7 @@ func TestLocalDateLayout(t *testing.T) {
 	tests := map[string]string{
 		"tr_TR":       "02.01.2006 15:04",
 		"tr_TR.UTF-8": "02.01.2006 15:04",
-		"en_US":       "01/02/2006 3:04 PM",
+		"en_US":       "01/02/2006 15:04",
 		"en_GB":       "02/01/2006 15:04",
 		"ja_JP":       "2006/01/02 15:04",
 		"":            "2006-01-02 15:04",
@@ -22,6 +22,12 @@ func TestLocalDateLayout(t *testing.T) {
 		}
 		if got := localDateLayout(normalized); got != want {
 			t.Errorf("localDateLayout(%q)=%q want %q", locale, got, want)
+		}
+	}
+	// Only the date order is locale specific: every layout keeps a 24-hour clock.
+	for _, locale := range []string{"en_us", "en_ca", "en_gb", "ja_jp", "ko_kr", "zh_cn", "tr_tr", "de_de", "fr_fr", "pt_br", "ru_ru", ""} {
+		if layout := localDateLayout(locale); strings.Contains(layout, "PM") || !strings.Contains(layout, "15:04") {
+			t.Errorf("localDateLayout(%q)=%q is not a 24-hour clock", locale, layout)
 		}
 	}
 }
