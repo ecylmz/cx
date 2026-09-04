@@ -8,28 +8,139 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-var useColor = func() bool {
+var useColor = detectColor()
+
+func detectColor() bool {
 	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	// A forced setting is how a caller keeps color through a pipe, for example
+	// `cx status | less -R`, where the char-device test below says no.
+	for _, key := range []string{"FORCE_COLOR", "CLICOLOR_FORCE"} {
+		if v := os.Getenv(key); v != "" && v != "0" {
+			return true
+		}
+	}
+	if os.Getenv("TERM") == "dumb" {
 		return false
 	}
 	s, _ := os.Stdout.Stat()
 	return s != nil && (s.Mode()&os.ModeCharDevice) != 0
-}()
+}
 
+// ansi closes with the code that undoes just this attribute rather than with a
+// blanket reset, so a styled string nested inside another one does not strip the
+// style around it. Bold and dim share a closer, so those two still cannot nest.
 func ansi(code, s string) string {
 	if !useColor {
 		return s
 	}
-	return "\x1b[" + code + "m" + s + "\x1b[0m"
+	return "\x1b[" + code + "m" + s + "\x1b[" + ansiOff(code) + "m"
 }
+
+func ansiOff(code string) string {
+	switch code {
+	case "1", "2":
+		return "22"
+	default:
+		return "39"
+	}
+}
+
 func green(s string) string  { return ansi("32", s) }
 func yellow(s string) string { return ansi("33", s) }
 func red(s string) string    { return ansi("31", s) }
 func cyan(s string) string   { return ansi("36", s) }
 func bold(s string) string   { return ansi("1", s) }
 func dim(s string) string    { return ansi("2", s) }
+
+// visibleCells counts the display cells a rendered line occupies, skipping the
+// escape sequences that carry no width.
+func visibleCells(s string) int {
+	n := 0
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			i = escapeEnd(s, i)
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		n++
+	}
+	return n
+}
+
+// escapeEnd returns the index just past the escape sequence starting at i.
+func escapeEnd(s string, i int) int {
+	i++ // the Esc byte itself
+	if i < len(s) && (s[i] == '[' || s[i] == ']' || s[i] == 'O') {
+		i++
+	}
+	for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
+		i++
+	}
+	if i < len(s) {
+		i++
+	}
+	return i
+}
+
+// fitCells truncates a rendered line to cols display cells, keeping every escape
+// sequence whole and closing whatever style the cut ran through. The dashboard
+// runs with line wrapping disabled, so an over-long line would otherwise be
+// chopped at the margin — sometimes mid-sequence. cols <= 0 means unbounded.
+func fitCells(s string, cols int) string {
+	if cols <= 0 || visibleCells(s) <= cols {
+		return s
+	}
+	var b strings.Builder
+	styled := false
+	n := 0
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			end := escapeEnd(s, i)
+			b.WriteString(s[i:end])
+			styled = true
+			i = end
+			continue
+		}
+		if n >= cols-1 {
+			break
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		b.WriteString(s[i : i+size])
+		i += size
+		n++
+	}
+	b.WriteString("…")
+	if styled {
+		b.WriteString("\x1b[0m")
+	}
+	return b.String()
+}
+
+// padCell pads s to n display cells. It must be given plain text: a width verb
+// applied to an already styled string counts its escape bytes as characters.
+func padCell(s string, n int) string {
+	if w := utf8.RuneCountInString(s); w < n {
+		return s + strings.Repeat(" ", n-w)
+	}
+	return s
+}
+
+// padStyled pads an already styled string to n cells, measuring the plain text
+// it was built from. The padding sits outside the styling, so a trailing cell
+// stays plain whitespace that can be trimmed off the end of a line.
+func padStyled(styled, plain string, n int) string {
+	if w := utf8.RuneCountInString(plain); w < n {
+		return styled + strings.Repeat(" ", n-w)
+	}
+	return styled
+}
+
 func emptyDash(s string) string {
 	if s == "" {
 		return "-"
@@ -55,10 +166,6 @@ func clamp(v, lo, hi float64) float64 {
 func barCells(percent float64, width int) (filled, empty string) {
 	n := int(math.Round(clamp(percent, 0, 100) / 100 * float64(width)))
 	return strings.Repeat("█", n), strings.Repeat("░", width-n)
-}
-func bar(percent float64, width int) string {
-	filled, empty := barCells(percent, width)
-	return filled + empty
 }
 func quotaBar(left float64, width int) string {
 	filled, empty := barCells(left, width)
@@ -112,6 +219,20 @@ func exactResetText(epoch int64) string {
 		return "unknown"
 	}
 	return time.Unix(epoch, 0).Local().Format(localDateLayout(localeName()))
+}
+
+// resetTextCompact drops the absolute timestamp and keeps the part a narrow
+// terminal has room for. Truncating the full text instead cut away the relative
+// time, which is the half that answers "when does this come back".
+func resetTextCompact(epoch int64, now time.Time) string {
+	if epoch <= 0 {
+		return "unknown"
+	}
+	d := time.Unix(epoch, 0).Local().Sub(now)
+	if d <= 0 {
+		return "now"
+	}
+	return "in " + relativeDuration(d)
 }
 
 func resetText(epoch int64, now time.Time) string {
@@ -174,39 +295,71 @@ func looksLikeUnstartedWindow(u WeeklyUsage, now time.Time) bool {
 	return got >= want-tolerance && got <= want+tolerance
 }
 
+const defaultBarCells = 22
+
+// barWidthFor shrinks the meter on a narrow terminal rather than letting the
+// percentage and the reset time run off the right margin.
+func barWidthFor(cols int) int {
+	if cols <= 0 {
+		return defaultBarCells
+	}
+	return min(max(cols/3, 8), defaultBarCells)
+}
+
+// compactBelowCols is the width under which the usage line drops detail rather
+// than having it cut off at the margin.
+const compactBelowCols = 80
+
 func usageLine(u WeeklyUsage) string {
-	return labeledUsageLine("weekly", u)
+	return labeledUsageLine("weekly", u, defaultBarCells, false)
 }
 
 func fiveHourUsageLine(u WeeklyUsage) string {
-	return labeledUsageLine("5 hour", u)
+	return labeledUsageLine("5 hour", u, defaultBarCells, false)
 }
 
-func labeledUsageLine(label string, u WeeklyUsage) string {
+// labeledUsageLine returns the line unindented; each caller owns its own
+// indentation instead of re-indenting a string the other one built.
+func labeledUsageLine(label string, u WeeklyUsage, barWidth int, compact bool) string {
+	now := time.Now()
 	left := clamp(100-u.UsedPercent, 0, 100)
 	pct := quotaColor(left, fmt.Sprintf("%5.1f%% left", left))
-	base := fmt.Sprintf("  %-6s  %s  %s", label, quotaBar(left, 22), pct)
-	if looksLikeUnstartedWindow(u, time.Now()) {
-		if label == "5 hour" {
+	base := fmt.Sprintf("%s  %s  %s", padCell(label, 6), quotaBar(left, barWidth), pct)
+	if looksLikeUnstartedWindow(u, now) {
+		if label == "5 hour" && !compact {
 			return base + "   " + dim("not started · starts with Codex use")
 		}
 		return base + "   " + dim("not started")
 	}
-	return base + "   " + dim("resets "+resetText(u.ResetsAt, time.Now()))
+	if compact {
+		return base + "   " + dim(resetTextCompact(u.ResetsAt, now))
+	}
+	return base + "   " + dim("resets "+resetText(u.ResetsAt, now))
 }
 
-func usageLines(r UsageResult) []string {
+// usageLines renders at full width, for output that wraps instead of being
+// clipped at the margin.
+func usageLines(r UsageResult) []string { return usageLinesWidth(r, 0) }
+
+// usageLinesWidth fits the meter and the trailing detail to cols display cells.
+// cols <= 0 means unbounded.
+func usageLinesWidth(r UsageResult, cols int) []string {
+	barWidth, compact := barWidthFor(cols), cols > 0 && cols < compactBelowCols
 	lines := make([]string, 0, 2)
 	if r.FiveHour != nil && r.FiveHour.WindowMinutes > 0 {
-		lines = append(lines, fiveHourUsageLine(*r.FiveHour))
+		lines = append(lines, labeledUsageLine("5 hour", *r.FiveHour, barWidth, compact))
 	}
 	if r.Usage.WindowMinutes > 0 || !r.Usage.FetchedAt.IsZero() {
-		lines = append(lines, usageLine(r.Usage))
+		lines = append(lines, labeledUsageLine("weekly", r.Usage, barWidth, compact))
 	}
 	return lines
 }
 
 func bankedExpiryText(raw string, now time.Time) string {
+	return bankedExpiryTextWidth(raw, now, false)
+}
+
+func bankedExpiryTextWidth(raw string, now time.Time, compact bool) string {
 	if strings.TrimSpace(raw) == "" {
 		return "expires unknown"
 	}
@@ -214,8 +367,14 @@ func bankedExpiryText(raw string, now time.Time) string {
 	if !ok {
 		return "expires " + raw
 	}
-	exact := t.Local().Format(localDateLayout(localeName()))
 	d := t.Sub(now)
+	if compact {
+		if d > 0 {
+			return "expires in " + relativeDuration(d)
+		}
+		return "expired " + shortDuration(-d) + " ago"
+	}
+	exact := t.Local().Format(localDateLayout(localeName()))
 	if d > 0 {
 		return "expires " + exact + " · in " + relativeDuration(d)
 	}
@@ -223,6 +382,10 @@ func bankedExpiryText(raw string, now time.Time) string {
 }
 
 func bankedResetLines(r UsageResult, indent string) []string {
+	return bankedResetLinesWidth(r, indent, 0)
+}
+
+func bankedResetLinesWidth(r UsageResult, indent string, cols int) []string {
 	if !r.BankedLoaded {
 		return nil
 	}
@@ -239,7 +402,8 @@ func bankedResetLines(r UsageResult, indent string) []string {
 		if label == "" {
 			label = fmt.Sprintf("reset %d", i+1)
 		}
-		lines = append(lines, indent+"  "+label+" · "+dim(bankedExpiryText(reset.ExpiresAt, now)))
+		compact := cols > 0 && cols < compactBelowCols
+		lines = append(lines, indent+"  "+label+" · "+dim(bankedExpiryTextWidth(reset.ExpiresAt, now, compact)))
 	}
 	return lines
 }
@@ -263,7 +427,7 @@ func printStatus(p paths, results []UsageResult) {
 		fmt.Println()
 		if r.Err == "" {
 			for _, line := range usageLines(r) {
-				fmt.Println(line)
+				fmt.Println("  " + line)
 			}
 			if r.PrimeErr != "" {
 				fmt.Printf("  %s · %s\n", red("window start failed"), r.PrimeErr)
@@ -276,7 +440,7 @@ func printStatus(p paths, results []UsageResult) {
 			}
 		} else if !r.Usage.FetchedAt.IsZero() {
 			for _, line := range usageLines(r) {
-				fmt.Println(line)
+				fmt.Println("  " + line)
 			}
 			fmt.Printf("  %s cached %s ago · %s\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)), r.Err)
 		} else {

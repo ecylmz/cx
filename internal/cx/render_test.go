@@ -65,8 +65,16 @@ func TestRenderHelpers(t *testing.T) {
 		t.Fatalf("ansi disabled=%q", got)
 	}
 	useColor = true
-	if got := ansi("31", "x"); got != "\x1b[31mx\x1b[0m" {
+	// A style closes with the code that undoes just itself, so a styled string
+	// nested in another one does not strip the style around it.
+	if got := ansi("31", "x"); got != "\x1b[31mx\x1b[39m" {
 		t.Fatalf("ansi enabled=%q", got)
+	}
+	if got := dim("x"); got != "\x1b[2mx\x1b[22m" {
+		t.Fatalf("dim enabled=%q", got)
+	}
+	if got := green("a" + red("b") + "c"); got != "\x1b[32ma\x1b[31mb\x1b[39mc\x1b[39m" {
+		t.Fatalf("nested color=%q", got)
 	}
 	useColor = false
 	if emptyDash("") != "-" || emptyDash("x") != "x" {
@@ -75,8 +83,8 @@ func TestRenderHelpers(t *testing.T) {
 	if clamp(-1, 0, 100) != 0 || clamp(101, 0, 100) != 100 || clamp(50, 0, 100) != 50 {
 		t.Fatal("clamp")
 	}
-	if got := bar(50, 4); got != "██░░" {
-		t.Fatalf("bar=%q", got)
+	if filled, empty := barCells(50, 4); filled+empty != "██░░" {
+		t.Fatalf("barCells=%q%q", filled, empty)
 	}
 	if got := shortDuration(2*time.Hour + 3*time.Minute); got != "2h 03m" {
 		t.Fatalf("short=%q", got)
@@ -122,6 +130,11 @@ func TestUsageLinePrintStatusAndJSON(t *testing.T) {
 	accounts := []Account{{ID: "a", Name: "primary", Plan: "plus", Email: "a@example.com"}, {ID: "b", Name: "backup"}}
 	results := []UsageResult{{Account: accounts[0], Usage: u}, {Account: accounts[1], Usage: WeeklyUsage{FetchedAt: now, WindowStarted: true}, Err: "offline"}}
 	out := captureStdout(t, func() { printStatus(p, results) })
+	// The usage line is rendered unindented and each caller adds its own
+	// indentation, so pin the one cx status uses.
+	if !strings.Contains(out, "\n  weekly  ") {
+		t.Fatalf("status usage line lost its indentation:\n%s", out)
+	}
 	for _, want := range []string{"cx status", "primary", "75.0% left", "stale", "offline"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
@@ -162,7 +175,7 @@ func TestExhaustedWindowStartStaysOneQuietLine(t *testing.T) {
 		t.Fatalf("want exactly one skip note, got %d:\n%s", notes, out)
 	}
 
-	frame, _ := renderDashboardFrame(p, []Account{a}, []UsageResult{r}, 0, "")
+	frame, _ := renderDashboardFrame(newDashboardView(p, []Account{a}, []UsageResult{r}, 0))
 	if strings.Contains(frame, "window start failed") {
 		t.Fatalf("dashboard reported a failure:\n%s", frame)
 	}

@@ -27,7 +27,9 @@ func TestRefreshingFrameShowsCachedAgeWithoutStale(t *testing.T) {
 		},
 	}}
 
-	frame, _ := renderDashboardFrame(p, accounts, results, 0, refreshFooter(0, 1))
+	v := newDashboardView(p, accounts, results, 0)
+	v.footer = refreshFooter(0, 1)
+	frame, _ := renderDashboardFrame(v)
 	if !strings.Contains(frame, "refreshing… · cached 15s ago") {
 		t.Fatalf("refreshing state missing cached age:\n%s", frame)
 	}

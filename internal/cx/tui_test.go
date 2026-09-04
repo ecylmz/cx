@@ -32,7 +32,19 @@ func TestReadKeyVariants(t *testing.T) {
 		{"k", "k"},
 		{"\x1b[A", "up"},
 		{"\x1b[B", "down"},
-		{"\x1bx", "esc"},
+		{"\x03", "ctrl-c"},
+		{"\x04", "ctrl-d"},
+		// Sequences the dashboard does not act on must be consumed and
+		// ignored, not reported as Esc, which every input loop treats as quit.
+		{"\x1b[C", "right"},
+		{"\x1b[D", "left"},
+		{"\x1b[5~", "pgup"},
+		{"\x1b[6~", "pgdn"},
+		{"\x1b[H", "home"},
+		{"\x1b[F", "end"},
+		{"\x1b[1;5A", "up"},
+		{"\x1b[3~", ""},
+		{"\x1bx", ""},
 	}
 	for _, tt := range tests {
 		withPipeStdin(t, tt.in, func() {
@@ -41,6 +53,43 @@ func TestReadKeyVariants(t *testing.T) {
 				t.Fatalf("readKey(%q)=%q err=%v want=%q", tt.in, got, err, tt.want)
 			}
 		})
+	}
+}
+
+func TestReadKeyReturnsOnASingleEsc(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	defer func() {
+		os.Stdin = old
+		_ = w.Close()
+		_ = r.Close()
+	}()
+	if _, err := w.Write([]byte{27}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The writer stays open, so a readKey that waits for a continuation byte
+	// would block forever instead of reporting the keypress.
+	type result struct {
+		key string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		key, err := readKey()
+		done <- result{key, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || got.key != "esc" {
+			t.Fatalf("readKey(esc)=%q err=%v", got.key, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readKey blocked on a single esc")
 	}
 }
 

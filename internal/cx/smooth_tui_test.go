@@ -33,8 +33,9 @@ func TestSelectionUpdateOnlyTouchesHeaderRows(t *testing.T) {
 
 	p := makeTestPaths(t)
 	accounts := []Account{{ID: "a", Name: "primary"}, {ID: "b", Name: "backup"}}
-	layout := dashboardLayout{headerRows: []int{3, 6}}
-	update := selectionUpdateString(p, accounts, 0, 1, layout)
+	layout := dashboardLayout{headerRows: []int{3, 6}, fits: true}
+	v := newDashboardView(p, accounts, nil, 0)
+	update := selectionUpdateString(v, 0, 1, layout)
 	for _, want := range []string{syncOutputBegin, syncOutputEnd, "\x1b[3;1H", "\x1b[6;1H", "primary", "backup"} {
 		if !strings.Contains(update, want) {
 			t.Fatalf("selection update missing %q: %q", want, update)
@@ -56,7 +57,9 @@ func TestDashboardFrameTracksVariableHeightRows(t *testing.T) {
 		{Account: accounts[0], Usage: WeeklyUsage{UsedPercent: 10, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}, BankedLoaded: true, BankedResets: []BankedReset{{ID: "r1", Title: "Full reset"}}},
 		{Account: accounts[1], Usage: WeeklyUsage{UsedPercent: 20, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}, BankedLoaded: true},
 	}
-	_, layout := renderDashboardFrame(p, accounts, results, 0, "live quota · live banked resets")
+	v := newDashboardView(p, accounts, results, 0)
+	v.footer = "live quota · live banked resets"
+	_, layout := renderDashboardFrame(v)
 	if len(layout.headerRows) != 2 || layout.headerRows[0] != 3 || layout.headerRows[1] <= layout.headerRows[0]+3 {
 		t.Fatalf("unexpected header rows: %v", layout.headerRows)
 	}

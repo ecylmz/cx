@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -23,8 +27,56 @@ const (
 	eraseCurrentLine = "\x1b[2K"
 )
 
+// dashboardLayout records where the last frame put things. headerRows is the
+// absolute terminal row of each account header, or -1 when the account is
+// scrolled out of view; fits reports whether the frame stayed inside the screen,
+// because absolute-row updates are only valid while nothing has scrolled.
 type dashboardLayout struct {
 	headerRows []int
+	fits       bool
+}
+
+type termSize struct{ rows, cols int }
+
+// terminalSize reads the window size through stty, the same mechanism the raw
+// mode switch already uses, so measuring the terminal adds no dependency. A zero
+// size means unknown, and every caller then treats the frame as unbounded.
+func terminalSize() termSize {
+	if rows, err := strconv.Atoi(os.Getenv("LINES")); err == nil && rows > 0 {
+		if cols, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && cols > 0 {
+			return termSize{rows: rows, cols: cols}
+		}
+	}
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = os.Stdin
+	out, err := cmd.Output()
+	if err != nil {
+		return termSize{}
+	}
+	var rows, cols int
+	if _, err := fmt.Sscan(strings.TrimSpace(string(out)), &rows, &cols); err != nil {
+		return termSize{}
+	}
+	return termSize{rows: rows, cols: cols}
+}
+
+// dashboardView is everything a frame needs: the data, the cursor, and the
+// terminal it has to fit into. State is read once per frame here rather than
+// once per keypress, which is what a cursor move used to cost.
+type dashboardView struct {
+	state       State
+	accounts    []Account
+	results     []UsageResult
+	sel         int
+	footer      string
+	size        termSize
+	refreshedAt time.Time
+	help        bool
+}
+
+func newDashboardView(p paths, accounts []Account, results []UsageResult, sel int) dashboardView {
+	st, _ := loadState(p)
+	return dashboardView{state: st, accounts: accounts, results: results, sel: sel, size: terminalSize()}
 }
 
 func runDashboard(p paths) error {
@@ -49,52 +101,143 @@ func runDashboard(p paths) error {
 		return err
 	}
 	defer endTerminalSession(old)
+	stopSignals := watchTerminalSignals(old)
+	defer stopSignals()
+	resize, stopResize := watchResize()
+	defer stopResize()
+	keys := newKeyStream()
 
 	sel := 0
 	for {
-		results := initialRefreshingResults(p, accounts)
-		layout := drawDashboardFrame(p, accounts, results, sel, refreshFooter(0, len(accounts)))
+		v := newDashboardView(p, accounts, initialRefreshingResults(p, accounts), sel)
+		v.footer = refreshFooter(0, len(accounts))
+		layout := drawDashboardFrame(v)
 		cache, _ := loadCache(p)
 		completed := 0
+		updates := fetchUsageUpdatesWithPriming(p, accounts)
+		ticker := time.NewTicker(countdownInterval)
 
-		for update := range fetchUsageUpdatesWithPriming(p, accounts) {
-			r := update.Result
-			if update.Final {
-				completed++
-				applyCachedUsageFallbackResult(cache, &r)
+		// One select serves results, input, resizes and the countdown together.
+		// Draining the result channel on its own is what used to make the whole
+		// screen deaf for a full round of network reads: no cursor, no quit.
+		action := ""
+		for action == "" {
+			select {
+			case update, ok := <-updates:
+				if !ok {
+					updates = nil
+					saveFreshCache(p, v.results)
+					v.refreshedAt = time.Now()
+					v.footer = ""
+					layout = drawDashboardFrame(v)
+					continue
+				}
+				r := update.Result
+				if update.Final {
+					completed++
+					applyCachedUsageFallbackResult(cache, &r)
+				}
+				v.results[update.Index] = r
+				v.footer = refreshFooter(completed, len(accounts))
+				layout = drawDashboardFrame(v)
+			case <-resize:
+				v.size = terminalSize()
+				layout = drawDashboardFrame(v)
+			case <-ticker.C:
+				// Every reset time on screen is relative, so a frame that is
+				// never redrawn quietly ages into a wrong one.
+				layout = drawDashboardFrame(v)
+			case ev := <-keys.ch:
+				if ev.err != nil {
+					// The terminal went away. That is how the session ends, not
+					// an error to report back to a shell that is no longer there.
+					action = "quit"
+					continue
+				}
+				var next string
+				next, layout = applyKey(&v, ev.key, layout, updates != nil)
+				if next != "switch" {
+					action = next
+					continue
+				}
+				// A switch is applied in place. It rewrites the auth.json
+				// symlink and moves the account to the front of the
+				// most-recently-used order; no account's quota changes, so the
+				// numbers already on screen are carried over rather than
+				// fetched again.
+				keys.drain()
+				rescan, err := applySwitch(p, &v)
+				if err != nil {
+					ticker.Stop()
+					return err
+				}
+				accounts = v.accounts
+				if len(accounts) == 0 {
+					ticker.Stop()
+					return nil
+				}
+				if rescan {
+					// The account list itself changed under us, so the carried
+					// results no longer line up with it.
+					action = "refresh"
+					continue
+				}
+				layout = drawDashboardFrame(v)
 			}
-			results[update.Index] = r
-			footer := refreshFooter(completed, len(accounts))
-			if completed == len(accounts) {
-				footer = "live 5-hour + weekly quota · live banked resets"
-			}
-			layout = drawDashboardFrame(p, accounts, results, sel, footer)
 		}
-		saveFreshCache(p, results)
+		ticker.Stop()
+		keys.drain()
+		sel = v.sel
 
-		idx, action, err := dashboardInputLoop(p, accounts, sel, layout)
-		if err != nil {
-			return err
-		}
-		sel = idx
 		switch action {
 		case "quit":
 			return nil
 		case "refresh":
 			continue
-		case "switch":
-			if err := switchAccount(p, accounts[sel]); err != nil {
-				return err
-			}
-			accounts, _ = listAccounts(p)
-			if len(accounts) == 0 {
-				return nil
-			}
-			sel = 0
-			continue
 		}
 	}
 }
+
+// applySwitch makes the selected account active and folds the result back into
+// the view without refetching. It reports rescan when the account list changed
+// under it, which is the one case where the carried-over results no longer line
+// up with the accounts they belong to.
+func applySwitch(p paths, v *dashboardView) (rescan bool, err error) {
+	if v.sel < 0 || v.sel >= len(v.accounts) {
+		return false, nil
+	}
+	target := v.accounts[v.sel]
+	if err := switchAccount(p, target); err != nil {
+		return false, err
+	}
+	accounts, err := listAccounts(p)
+	if err != nil {
+		return false, err
+	}
+	byID := make(map[string]UsageResult, len(v.results))
+	for _, r := range v.results {
+		byID[r.Account.ID] = r
+	}
+	results := make([]UsageResult, len(accounts))
+	for i, a := range accounts {
+		r, ok := byID[a.ID]
+		if !ok {
+			rescan = true
+		}
+		// The reload carries the account's new last-used time with it.
+		r.Account = a
+		results[i] = r
+	}
+	v.state, _ = loadState(p)
+	v.accounts = accounts
+	v.results = results
+	v.sel = accountIndex(accounts, target.ID)
+	return rescan || len(accounts) != len(byID), nil
+}
+
+// countdownInterval redraws the frame often enough that the relative reset times
+// stay honest, without costing a network round trip to do it.
+const countdownInterval = 30 * time.Second
 
 func refreshFooter(done, total int) string {
 	if total <= 0 {
@@ -151,6 +294,8 @@ func applyCachedUsageFallback(p paths, results []UsageResult) {
 	}
 }
 
+// dashboardLoop draws one frame and serves input until an action, without the
+// refresh round that runDashboard wraps around it.
 func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) (int, string, error) {
 	if !isTerminal() {
 		printStatus(p, results)
@@ -161,118 +306,293 @@ func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) 
 		return sel, "", err
 	}
 	defer endTerminalSession(old)
-	layout := drawDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
-	return dashboardInputLoop(p, accounts, sel, layout)
-}
-
-func dashboardInputLoop(p paths, accounts []Account, sel int, layout dashboardLayout) (int, string, error) {
-	// Every return from here runs an action or leaves the screen. Keystrokes
-	// typed ahead of that were meant for the screen being left, not for a
-	// repeat of the action, so drop them the way a fresh reader per keypress
-	// used to. Navigation inside the loop still keeps every key.
-	defer discardPendingKeys()
+	v := newDashboardView(p, accounts, results, sel)
+	layout := drawDashboardFrame(v)
+	keys := newKeyStream()
+	// The action this returns rewrites accounts or leaves the screen. Keys typed
+	// ahead of it were meant for the screen being left, not for a repeat of the
+	// action, so they are dropped rather than replayed.
+	defer keys.drain()
 	for {
-		key, err := readKey()
-		if err != nil {
-			return sel, "", err
+		ev := <-keys.ch
+		if ev.err != nil {
+			return v.sel, "quit", nil // The terminal went away.
 		}
-		oldSel := sel
-		switch key {
-		case "up", "k":
-			sel = max(sel-1, 0)
-		case "down", "j":
-			sel = min(sel+1, max(len(accounts)-1, 0))
-		case "enter":
-			return sel, "switch", nil
-		case "r":
-			return sel, "refresh", nil
-		case "q", "esc":
-			return sel, "quit", nil
-		}
-		if sel != oldSel {
-			writeSelectionUpdate(p, accounts, oldSel, sel, layout)
+		action := ""
+		action, layout = applyKey(&v, ev.key, layout, false)
+		if action != "" {
+			return v.sel, action, nil
 		}
 	}
 }
 
+// applyKey folds one keypress into the view and reports the action it asks for,
+// redrawing whatever the key changed. While a refresh is still streaming, the
+// keys that would act on half-fetched data are ignored rather than queued.
+func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing bool) (string, dashboardLayout) {
+	if v.help {
+		v.help = false
+		return "", drawDashboardFrame(*v)
+	}
+	switch key {
+	case "enter":
+		if refreshing {
+			return "", layout
+		}
+		return "switch", layout
+	case "r":
+		if refreshing {
+			return "", layout
+		}
+		return "refresh", layout
+	case "q", "esc", "ctrl-c", "ctrl-d":
+		return "quit", layout
+	case "?":
+		v.help = true
+		return "", drawDashboardFrame(*v)
+	}
+	oldSel := v.sel
+	v.sel = moveSelection(v.sel, len(v.accounts), key)
+	if v.sel == oldSel {
+		return "", layout
+	}
+	if update := selectionUpdateString(*v, oldSel, v.sel, layout); update != "" {
+		_, _ = os.Stdout.WriteString(update)
+		return "", layout
+	}
+	// The cheap two-line update is only valid while the frame sits still; a
+	// scrolled or oversized frame has to be drawn again in full.
+	return "", drawDashboardFrame(*v)
+}
+
+// moveSelection maps a navigation key to a new cursor position, and returns sel
+// unchanged for every key that is not navigation.
+func moveSelection(sel, n int, key string) int {
+	last := max(n-1, 0)
+	switch key {
+	case "up", "k":
+		return max(sel-1, 0)
+	case "down", "j":
+		return min(sel+1, last)
+	case "pgup":
+		return max(sel-pageJump, 0)
+	case "pgdn":
+		return min(sel+pageJump, last)
+	case "home", "g":
+		return 0
+	case "end", "G":
+		return last
+	}
+	return sel
+}
+
+const pageJump = 5
+
+// accountIndex keeps the cursor on one account across a reload of the account
+// list, so an action that rewrites the list does not move the selection.
+func accountIndex(accounts []Account, id string) int {
+	for i, a := range accounts {
+		if a.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
 func drawDashboard(p paths, accounts []Account, results []UsageResult, sel int) {
-	frame, _ := renderDashboardFrame(p, accounts, results, sel, "live 5-hour + weekly quota · live banked resets")
+	frame, _ := renderDashboardFrame(newDashboardView(p, accounts, results, sel))
 	fmt.Print(clearScreenHome)
 	fmt.Print(frame)
 }
 
-func drawDashboardFrame(p paths, accounts []Account, results []UsageResult, sel int, footer string) dashboardLayout {
-	frame, layout := renderDashboardFrame(p, accounts, results, sel, footer)
+func drawDashboardFrame(v dashboardView) dashboardLayout {
+	frame, layout := renderDashboardFrame(v)
 	writeFullFrame(frame)
 	return layout
 }
 
-func renderDashboardFrame(p paths, accounts []Account, results []UsageResult, sel int, footer string) (string, dashboardLayout) {
-	var b strings.Builder
-	layout := dashboardLayout{headerRows: make([]int, 0, len(results))}
-	row := 1
-	host, _ := os.Hostname()
-	fmt.Fprintf(&b, " %s  %s\n\n", bold("cx"), dim(host))
-	row += 2
-	st, _ := loadState(p)
-	for i, r := range results {
-		layout.headerRows = append(layout.headerRows, row)
-		b.WriteString(dashboardAccountHeader(st, r.Account, i == sel))
-		b.WriteByte('\n')
-		row++
+func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
+	if v.help {
+		return renderHelpScreen(v.size), dashboardLayout{}
+	}
 
-		if refreshing, note := refreshingStatus(r.Err); refreshing {
-			row += writeDashboardUsageLines(&b, r)
-			if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
-				note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
-			}
-			fmt.Fprintf(&b, "   %s\n", cyan(note))
-			row++
-		} else if r.Err == "" {
-			row += writeDashboardUsageLines(&b, r)
-			if r.PrimeErr != "" {
-				fmt.Fprintf(&b, "   %s %s\n", red("window start failed"), r.PrimeErr)
-				row++
-			} else if r.PrimeSkipped != "" {
-				b.WriteString("   " + dim("window not started · "+r.PrimeSkipped) + "\n")
-				row++
-			} else if r.Primed {
-				b.WriteString("   " + dim("quota windows started just now") + "\n")
-				row++
-			}
-		} else if !r.Usage.FetchedAt.IsZero() {
-			row += writeDashboardUsageLines(&b, r)
-			fmt.Fprintf(&b, "   %s · cached %s ago\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)))
-			row++
-		} else {
-			fmt.Fprintf(&b, "   %s %s\n", red("unavailable"), r.Err)
-			row++
+	blocks := make([][]string, len(v.results))
+	total := 0
+	for i := range v.results {
+		blocks[i] = accountBlock(v, i)
+		total += len(blocks[i])
+	}
+
+	head := []string{dashboardTitle(v), ""}
+	// The footer row stays present even when there is nothing to say, so the
+	// frame does not lose a line — and jump — the moment a refresh finishes.
+	foot := []string{
+		dim(" ↑/↓ or j/k select   enter switch   r refresh   ? keys   q quit"),
+		dim(" " + v.footer),
+	}
+
+	start, end := 0, len(blocks)
+	scroll := false
+	if v.size.rows > 0 {
+		// One row of headroom: the frame's last newline would otherwise push
+		// the screen up by one and invalidate every absolute row below.
+		avail := v.size.rows - len(head) - len(foot) - 1
+		if scroll = total > avail; scroll {
+			avail -= 2 // the two scroll hints
 		}
-		for _, line := range bankedResetLines(r, "   ") {
-			b.WriteString(line)
-			b.WriteByte('\n')
-			row++
-		}
+		start, end = blockWindow(blocks, v.sel, avail)
+	}
+
+	var b strings.Builder
+	layout := dashboardLayout{headerRows: make([]int, len(blocks))}
+	for i := range layout.headerRows {
+		layout.headerRows[i] = -1
+	}
+	row := 1
+	write := func(line string) {
+		b.WriteString(fitCells(line, v.size.cols))
 		b.WriteByte('\n')
 		row++
 	}
-	b.WriteString(dim(" ↑/↓ or j/k select   enter switch   r refresh   q quit"))
-	b.WriteByte('\n')
-	b.WriteString(dim(" " + footer))
-	b.WriteByte('\n')
+	for _, line := range head {
+		write(line)
+	}
+	if scroll {
+		write(scrollHint("↑", start))
+	}
+	for i := start; i < end; i++ {
+		layout.headerRows[i] = row
+		for _, line := range blocks[i] {
+			write(line)
+		}
+	}
+	if scroll {
+		write(scrollHint("↓", len(blocks)-end))
+	}
+	for _, line := range foot {
+		write(line)
+	}
+	layout.fits = v.size.rows <= 0 || row-1 < v.size.rows
 	return b.String(), layout
 }
 
-// writeDashboardUsageLines re-indents the shared status usage lines for the
-// dashboard, which carries one more leading space than cx status, and reports
-// how many rows it wrote.
-func writeDashboardUsageLines(b *strings.Builder, r UsageResult) int {
-	lines := usageLines(r)
-	for _, line := range lines {
-		b.WriteString("   " + strings.TrimPrefix(line, "  ") + "\n")
+// blockWindow picks the run of account blocks to show. The selected account is
+// always inside it, which is what keeps the cursor on screen and the absolute
+// rows in dashboardLayout meaningful when the list is taller than the terminal.
+func blockWindow(blocks [][]string, sel, avail int) (start, end int) {
+	if len(blocks) == 0 {
+		return 0, 0
 	}
-	return len(lines)
+	sel = min(max(sel, 0), len(blocks)-1)
+	start, end = sel, sel+1
+	used := len(blocks[sel])
+	for {
+		grew := false
+		if end < len(blocks) && used+len(blocks[end]) <= avail {
+			used += len(blocks[end])
+			end++
+			grew = true
+		}
+		if start > 0 && used+len(blocks[start-1]) <= avail {
+			used += len(blocks[start-1])
+			start--
+			grew = true
+		}
+		if !grew {
+			return start, end
+		}
+	}
 }
+
+func scrollHint(arrow string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return dim(fmt.Sprintf(" %s %d more", arrow, n))
+}
+
+func dashboardTitle(v dashboardView) string {
+	// The hostname used to sit here; which account is live and how old the
+	// numbers are is what the screen is actually about.
+	name := "no active account"
+	for _, a := range v.accounts {
+		if a.ID == v.state.ActiveID {
+			name = a.Name
+			break
+		}
+	}
+	line := " " + bold("cx") + "  " + name
+	if !v.refreshedAt.IsZero() {
+		line += "  " + dim("· updated "+shortDuration(time.Since(v.refreshedAt))+" ago")
+	}
+	return line
+}
+
+// accountBlock renders one account as the lines it occupies, so the frame can be
+// windowed by account instead of being cut at an arbitrary row.
+func accountBlock(v dashboardView, i int) []string {
+	const indent = "   "
+	r := v.results[i]
+	lines := []string{dashboardAccountHeader(v.state, r.Account, i == v.sel)}
+	usage := func() {
+		for _, line := range usageLinesWidth(r, v.size.cols) {
+			lines = append(lines, indent+line)
+		}
+	}
+
+	if refreshing, note := refreshingStatus(r.Err); refreshing {
+		usage()
+		if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
+			note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
+		}
+		lines = append(lines, indent+cyan(note))
+	} else if r.Err == "" {
+		usage()
+		switch {
+		case r.PrimeErr != "":
+			lines = append(lines, indent+red("window start failed")+" "+r.PrimeErr)
+		case r.PrimeSkipped != "":
+			lines = append(lines, indent+dim("window not started · "+r.PrimeSkipped))
+		case r.Primed:
+			lines = append(lines, indent+dim("quota windows started just now"))
+		}
+	} else if !r.Usage.FetchedAt.IsZero() {
+		usage()
+		lines = append(lines, indent+yellow("stale")+" · cached "+shortDuration(time.Since(r.Usage.FetchedAt))+" ago")
+	} else {
+		lines = append(lines, indent+red("unavailable")+" "+r.Err)
+	}
+
+	lines = append(lines, bankedResetLinesWidth(r, indent, v.size.cols)...)
+	return append(lines, "")
+}
+
+func renderHelpScreen(size termSize) string {
+	rows := [][2]string{
+		{"↑ ↓  ·  k j", "move the cursor"},
+		{"PgUp PgDn", "jump " + fmt.Sprint(pageJump) + " accounts"},
+		{"g  ·  Home", "first account"},
+		{"G  ·  End", "last account"},
+		{"enter", "switch to the selected account"},
+		{"r", "refresh quota and banked resets"},
+		{"?", "this screen"},
+		{"q  ·  Esc  ·  Ctrl+C", "quit"},
+	}
+	var b strings.Builder
+	b.WriteString(fitCells(" "+bold("cx")+"  keys", size.cols) + "\n\n")
+	for _, row := range rows {
+		b.WriteString(fitCells("   "+padCell(row[0], 22)+dim(row[1]), size.cols) + "\n")
+	}
+	b.WriteString("\n" + fitCells(dim(" press any key to go back"), size.cols) + "\n")
+	return b.String()
+}
+
+// Account rows are laid out in fixed cells so the plan and email columns line
+// up down the list.
+const (
+	accountNameCell = 18
+	accountPlanCell = 10
+)
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
 	cursor := "  "
@@ -284,14 +604,18 @@ func dashboardAccountHeader(st State, a Account, selected bool) string {
 		active = green("●")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s%s %-18s", cursor, active, bold(a.Name))
-	if a.Plan != "" {
-		fmt.Fprintf(&b, " %-10s", a.Plan)
+	// Pad before styling: a width verb counts the escape bytes of an already
+	// colored string as characters, which silently shrinks the column.
+	fmt.Fprintf(&b, "%s%s %s", cursor, active, padStyled(bold(a.Name), a.Name, accountNameCell))
+	// The plan cell keeps its width even when the account has no plan, so an
+	// account without one does not slide its email into the plan column.
+	if a.Plan != "" || a.Email != "" {
+		b.WriteString(" " + padCell(a.Plan, accountPlanCell))
 	}
 	if a.Email != "" {
-		fmt.Fprintf(&b, " %s", dim(a.Email))
+		b.WriteString(" " + dim(a.Email))
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), " ")
 }
 
 func writeFullFrame(frame string) {
@@ -304,25 +628,26 @@ func writeFullFrame(frame string) {
 	_, _ = os.Stdout.WriteString(b.String())
 }
 
-func selectionUpdateString(p paths, accounts []Account, oldSel, newSel int, layout dashboardLayout) string {
-	if oldSel < 0 || newSel < 0 || oldSel >= len(accounts) || newSel >= len(accounts) ||
-		oldSel >= len(layout.headerRows) || newSel >= len(layout.headerRows) {
+// selectionUpdateString repaints just the two header rows a cursor move
+// touched. It returns "" whenever the absolute rows cannot be trusted — a frame
+// taller than the screen has scrolled, and a scrolled-out account has no row at
+// all — and the caller then redraws the whole frame instead.
+func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboardLayout) string {
+	rows := layout.headerRows
+	if !layout.fits || oldSel < 0 || newSel < 0 ||
+		oldSel >= len(v.accounts) || newSel >= len(v.accounts) ||
+		oldSel >= len(rows) || newSel >= len(rows) ||
+		rows[oldSel] < 0 || rows[newSel] < 0 {
 		return ""
 	}
-	st, _ := loadState(p)
 	var b strings.Builder
 	b.WriteString(syncOutputBegin)
 	for _, idx := range []int{oldSel, newSel} {
-		fmt.Fprintf(&b, "\x1b[%d;1H%s%s", layout.headerRows[idx], eraseCurrentLine, dashboardAccountHeader(st, accounts[idx], idx == newSel))
+		header := dashboardAccountHeader(v.state, v.accounts[idx], idx == newSel)
+		fmt.Fprintf(&b, "\x1b[%d;1H%s%s", rows[idx], eraseCurrentLine, fitCells(header, v.size.cols))
 	}
 	b.WriteString(syncOutputEnd)
 	return b.String()
-}
-
-func writeSelectionUpdate(p paths, accounts []Account, oldSel, newSel int, layout dashboardLayout) {
-	if update := selectionUpdateString(p, accounts, oldSel, newSel, layout); update != "" {
-		_, _ = os.Stdout.WriteString(update)
-	}
 }
 
 func pickAccount(p paths) (Account, error) {
@@ -341,23 +666,22 @@ func pickAccount(p paths) (Account, error) {
 		return Account{}, err
 	}
 	defer endTerminalSession(old)
-	defer discardPendingKeys()
+	bytes := keyBytes()
+	defer discardPendingKeys(bytes)
 	sel := 0
 	for {
 		writeFullFrame(renderAccountPicker(accounts, sel))
-		k, e := readKey()
+		k, e := readKeyFrom(bytes)
 		if e != nil {
 			return Account{}, e
 		}
 		switch k {
-		case "up", "k":
-			sel = max(sel-1, 0)
-		case "down", "j":
-			sel = min(sel+1, max(len(accounts)-1, 0))
 		case "enter":
 			return accounts[sel], nil
-		case "esc", "q":
+		case "esc", "q", "ctrl-c", "ctrl-d":
 			return Account{}, errors.New("cancelled")
+		default:
+			sel = moveSelection(sel, len(accounts), k)
 		}
 	}
 }
@@ -436,56 +760,251 @@ func restoreMode(old string) {
 	_ = cmd.Run()
 }
 
+// watchTerminalSignals restores the terminal when the process is killed. A
+// signal skips the deferred cleanup, which would hand the user back a shell
+// still in raw mode, on the alternate screen, with no cursor.
+func watchTerminalSignals(old string) func() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ch:
+			endTerminalSession(old)
+			os.Exit(1)
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(ch)
+		close(done)
+	}
+}
+
+// watchResize reports terminal size changes. Without it a resized window leaves
+// both the frame and the absolute rows the cursor writes to describing a screen
+// that no longer exists.
+func watchResize() (<-chan struct{}, func()) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	out := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ch:
+				select {
+				case out <- struct{}{}:
+				default: // A redraw is already pending; one is enough.
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	return out, func() {
+		signal.Stop(ch)
+		close(done)
+	}
+}
+
+type keyEvent struct {
+	key string
+	err error
+}
+
+// keyStream reads keys on a goroutine so a screen can serve input while it is
+// still waiting on something else. The reader outlives any single wait, so a key
+// it has already pulled off the terminal is delivered to the next receive
+// instead of being lost between them.
+type keyStream struct {
+	ch    chan keyEvent
+	bytes chan byteRead
+}
+
+func newKeyStream() *keyStream {
+	// Resolved here, on the caller's goroutine: the reader below then never
+	// touches os.Stdin or the stream globals.
+	bytes := keyBytes()
+	s := &keyStream{ch: make(chan keyEvent, 16), bytes: bytes}
+	go func() {
+		for {
+			key, err := readKeyFrom(bytes)
+			s.ch <- keyEvent{key: key, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return s
+}
+
+// drain drops the keys typed ahead of an action, so that holding a key down
+// cannot replay it: switching rewrites the auth.json symlink and refreshing
+// costs a full round of network reads.
+func (s *keyStream) drain() {
+	discardPendingKeys(s.bytes)
+	for {
+		select {
+		case <-s.ch:
+		default:
+			return
+		}
+	}
+}
+
+// Terminal bytes are read by exactly one goroutine, whose channel every reader
+// then shares. A single owner is what makes a bounded wait safe: the byte the
+// wait gave up on stays queued for the next read instead of being lost, and no
+// second reader is left racing on the buffer.
+type byteRead struct {
+	b   byte
+	err error
+}
+
 var (
-	keyReaderSource *os.File
-	keyReaderBuf    *bufio.Reader
+	byteMu     sync.Mutex
+	byteSource *os.File
+	byteChan   chan byteRead
 )
 
-// keyReader returns the buffered reader for the current os.Stdin. Reusing it
-// across calls keeps the bytes a single read pulled in past the first keypress,
-// which a fresh reader per call would discard; it is rebound when os.Stdin
-// itself changes.
-func keyReader() *bufio.Reader {
-	if keyReaderBuf == nil || keyReaderSource != os.Stdin {
-		keyReaderSource = os.Stdin
-		keyReaderBuf = bufio.NewReader(os.Stdin)
+// keyBytes returns the channel of terminal bytes, starting the reader on first
+// use and rebinding it when os.Stdin itself changes. Callers resolve the channel
+// once and then work with it directly, so the globals here are only ever touched
+// from the goroutine that asked for the stream.
+func keyBytes() chan byteRead {
+	byteMu.Lock()
+	defer byteMu.Unlock()
+	if byteChan == nil || byteSource != os.Stdin {
+		byteSource = os.Stdin
+		ch := make(chan byteRead, 64)
+		byteChan = ch
+		r := bufio.NewReader(os.Stdin)
+		go func() {
+			for {
+				b, err := r.ReadByte()
+				ch <- byteRead{b: b, err: err}
+				if err != nil {
+					return
+				}
+			}
+		}()
 	}
-	return keyReaderBuf
+	return byteChan
+}
+
+func nextByte(ch chan byteRead) (byte, error) {
+	got := <-ch
+	return got.b, got.err
+}
+
+// nextByteWithin waits a bounded time for the next byte. A wait that expires
+// leaves the byte queued, so giving up costs nothing.
+func nextByteWithin(ch chan byteRead, d time.Duration) (byte, bool) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case got := <-ch:
+		return got.b, got.err == nil
+	case <-timer.C:
+		return 0, false
+	}
 }
 
 // discardPendingKeys drops terminal input that arrived but has not been read
 // yet. It is called when leaving an input loop, so that keys typed ahead of an
 // action cannot replay it — switching writes the auth.json symlink and
 // refreshing costs a full round of network reads.
-func discardPendingKeys() {
-	r := keyReader()
-	if n := r.Buffered(); n > 0 {
-		_, _ = r.Discard(n)
+func discardPendingKeys(ch chan byteRead) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
 	}
 }
 
-func readKey() (string, error) {
-	r := keyReader()
-	b, err := r.ReadByte()
+// escContinuationWait bounds the wait for the byte after Esc. It has to outlast
+// a fragmented arrow-key sequence without making a bare Esc keypress feel slow.
+// Over a high-latency link the two halves of an arrow key can land tens of
+// milliseconds apart, and a window that expires first reads the arrow as Esc.
+const escContinuationWait = 150 * time.Millisecond
+
+func readEscapeSequence(ch chan byteRead) (string, error) {
+	// A terminal sends a whole sequence in one burst, so only a bare Esc
+	// actually waits here, and only briefly.
+	intro, ok := nextByteWithin(ch, escContinuationWait)
+	if !ok {
+		return "esc", nil
+	}
+	if intro != '[' && intro != 'O' {
+		return "", nil // Alt+key: consumed, not acted on.
+	}
+	// CSI and SS3 both run parameter and intermediate bytes up to one final
+	// byte in 0x40-0x7e.
+	var params []byte
+	var final byte
+	for {
+		c, err := nextByte(ch)
+		if err != nil {
+			return "", err
+		}
+		if c >= 0x40 && c <= 0x7e {
+			final = c
+			break
+		}
+		if len(params) >= 16 {
+			return "", nil // Malformed; stop rather than read without bound.
+		}
+		params = append(params, c)
+	}
+	switch final {
+	case 'A':
+		return "up", nil
+	case 'B':
+		return "down", nil
+	case 'C':
+		return "right", nil
+	case 'D':
+		return "left", nil
+	case 'H':
+		return "home", nil
+	case 'F':
+		return "end", nil
+	case '~':
+		switch string(params) {
+		case "1", "7":
+			return "home", nil
+		case "4", "8":
+			return "end", nil
+		case "5":
+			return "pgup", nil
+		case "6":
+			return "pgdn", nil
+		}
+	}
+	return "", nil
+}
+
+func readKey() (string, error) { return readKeyFrom(keyBytes()) }
+
+func readKeyFrom(ch chan byteRead) (string, error) {
+	b, err := nextByte(ch)
 	if err != nil {
 		return "", err
 	}
 	switch b {
 	case '\r', '\n':
 		return "enter", nil
+	case 3:
+		// Raw mode clears ISIG, so Ctrl+C arrives as a byte and never as a
+		// signal. Left unnamed it matched no case and did nothing at all.
+		return "ctrl-c", nil
+	case 4:
+		return "ctrl-d", nil
 	case 27:
-		b2, _ := r.ReadByte()
-		if b2 != '[' {
-			return "esc", nil
-		}
-		b3, _ := r.ReadByte()
-		if b3 == 'A' {
-			return "up", nil
-		}
-		if b3 == 'B' {
-			return "down", nil
-		}
-		return "esc", nil
+		return readEscapeSequence(ch)
 	default:
 		return string([]byte{b}), nil
 	}
