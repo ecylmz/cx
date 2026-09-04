@@ -82,6 +82,7 @@ jobs:
           (cd dist && sha256sum cx-* > SHA256SUMS)
 
       - name: Publish
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,6 +94,7 @@ jobs:
             CURRENT="$(git show origin/main:VERSION | tr -d '[:space:]')"
             if [[ "v$CURRENT" != "$TAG" ]]; then
               echo "skip stale release $TAG; main declares v$CURRENT"
+              echo "released=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -114,3 +116,25 @@ jobs:
             args+=(--target "$GITHUB_SHA")
           fi
           gh release create "${args[@]}"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        if: steps.publish.outputs.released == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TAP_REPO: ecylmz/homebrew-tap
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "TAP_DISPATCH_TOKEN is unset; cannot update the tap" >&2
+            exit 1
+          fi
+          gh workflow run update-formula.yml \
+            --repo "$TAP_REPO" \
+            --field formula=cx \
+            --field tag="$TAG" \
+            --field repository="$GITHUB_REPOSITORY"
+          echo "dispatched $TAP_REPO update for $TAG"
+          echo "https://github.com/$TAP_REPO/actions/workflows/update-formula.yml"
