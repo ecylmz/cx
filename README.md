@@ -31,14 +31,16 @@ Omarchy ships Codex as a mise-managed lazy launcher in `~/.local/bin`; `cx` work
 ## Use
 
 ```sh
-cx add primary --expect you@example.com
+cx add work --expect you@example.com
 cx add backup --expect other@example.com
 cx
 ```
 
 Use `--expect EMAIL` when adding or re-authorizing an account if multiple ChatGPT accounts are signed into the browser. After Codex device authorization finishes, cx reads the resulting credential before persisting it. If the authenticated email differs from the expected email, cx rejects the login and leaves the stored account unchanged. If the same ChatGPT identity is already managed by cx, `cx add` also rejects the duplicate instead of silently merging it into another account name.
 
-On the first add, if `~/.codex/auth.json` already contains a normal ChatGPT login, cx preserves it as a managed account before adding the new one. Its name is derived from the email local part when possible, so `emre.can.ylmz@gmail.com` becomes `emre.can.ylmz` rather than an opaque `current` account.
+The installer sets up the first account for you. If `~/.codex/auth.json` already holds a normal ChatGPT login, it is imported as a managed account named `primary` and immediately becomes the active one, so an existing Codex setup keeps working unchanged. If the system has no Codex login yet, the installer adds nothing and tells you to run `cx add NAME`; cx never invents an account. The first account you add yourself keeps the name you give it — `primary` is only the name used for an imported pre-cx login. Rename it any time with `cx rename primary NEW`.
+
+Running the installer again is a no-op here: once cx manages at least one account, `cx init` imports nothing.
 
 The dashboard shows the active account, both the 5-hour and weekly quota remaining, each window's full local reset date/time, and every available banked reset with its expiration time. Cached values appear immediately as `refreshing`, then each account switches to live data as its parallel refresh finishes; the footer shows refresh progress across accounts.
 
@@ -51,6 +53,7 @@ cx                                      # dashboard
 cx status                               # live status for every account
 cx use                                  # interactive account switch
 cx use primary                          # atomic auth.json symlink switch
+cx init                                 # import an existing Codex login as "primary" (the installer runs this)
 cx add backup --expect you@example.com  # add and reject the wrong browser account
 cx relogin backup --expect you@example.com
 cx doctor                               # verify cx files, symlink and shell integration
