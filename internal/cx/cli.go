@@ -79,6 +79,11 @@ func Main() {
 			fatal(errors.New("usage: cx shell-init"))
 		}
 		printShellInit()
+	case "init":
+		if len(args) != 1 {
+			fatal(errors.New("usage: cx init"))
+		}
+		handleInit(p)
 	case "add":
 		opts, err := parseLoginCommandArgs(args[1:], false, "cx add [NAME] [--expect EMAIL]")
 		if err != nil {
@@ -138,6 +143,26 @@ func Main() {
 		}
 	default:
 		fatal(fmt.Errorf("unknown command %q; run cx help", args[0]))
+	}
+}
+
+func handleInit(p paths) {
+	a, status, err := bootstrapPrimaryAccount(p)
+	if err != nil {
+		fatal(err)
+	}
+	switch status {
+	case bootstrapAdopted:
+		fmt.Printf("%s adopted existing Codex login as %s", green("\u2713"), a.Name)
+		if a.Email != "" {
+			fmt.Printf(" (%s)", a.Email)
+		}
+		fmt.Println()
+		fmt.Println(dim("add more accounts with: cx add NAME --expect EMAIL"))
+	case bootstrapAlreadyManaged:
+		fmt.Println(dim("cx already manages accounts; nothing to import"))
+	default:
+		fmt.Println(dim("no existing Codex login found; add your first account with: cx add NAME"))
 	}
 }
 
@@ -276,6 +301,7 @@ Usage:
   cx                                  live quota dashboard; starts unused windows
   cx status [NAME] [--json]           live quota status; starts unused windows
   cx add [NAME] [--expect EMAIL]      add account with Codex device auth
+  cx init                             import an existing Codex login as "primary" (run by the installer)
   cx relogin NAME [--expect EMAIL]    refresh one account's credential safely
   cx use [NAME] [--resume]            switch account; interactive if NAME omitted
   cx current                          show active account

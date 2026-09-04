@@ -159,6 +159,13 @@ configure_codex_shell_integration() {
   printf 'restart your shell or run: eval "$(%s/cx shell-init)"\n' "$DEST_DIR"
 }
 
+bootstrap_first_account() {
+  # Import an already-authorized Codex login as the first managed account
+  # ("primary"). On a system without a Codex login this prints a hint and adds
+  # nothing; the user names their own first account with cx add.
+  "$DEST_DIR/cx" init || printf 'cx install: warning: could not import an existing Codex login\n' >&2
+}
+
 if [ "${CX_BUILD_FROM_SOURCE:-0}" = 1 ]; then
   build_source
 elif [ -f "$PREBUILT" ]; then
@@ -177,6 +184,7 @@ configure_codex_shell_integration
 
 printf 'installed %s\n' "$DEST_DIR/cx"
 "$DEST_DIR/cx" version
+bootstrap_first_account
 if ! printf '%s' ":$PATH:" | grep -q ":$DEST_DIR:"; then
   printf 'add %s to PATH\n' "$DEST_DIR"
 fi

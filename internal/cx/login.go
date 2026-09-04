@@ -47,12 +47,6 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 		}
 	}
 
-	// On the very first add, preserve a pre-existing bare Codex login as its
-	// own managed account before starting isolated device auth for the new one.
-	if _, _, err := adoptExistingCodexAuth(p, requestedName); err != nil {
-		return Account{}, err
-	}
-
 	id, err := newID()
 	if err != nil {
 		return Account{}, err
