@@ -4,7 +4,7 @@ A small Codex account switcher for macOS and Linux.
 
 Add multiple ChatGPT accounts, switch between them, and see each account's live 5-hour and weekly quotas with reset times — without touching your Codex sessions, history, or config.
 
-![cx status](assets/cx-status.svg)
+![cx dashboard](assets/cx-dashboard.svg)
 
 ## Install
 
