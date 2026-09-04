@@ -25,10 +25,10 @@ const (
 )
 
 // bootstrapPrimaryAccount imports a pre-cx ChatGPT login from
-// CODEX_HOME/auth.json as the first managed account, named "primary". It runs
-// at install time and is a no-op when cx already manages accounts or when the
-// system has no ChatGPT login: cx never invents an account in that case, the
-// user adds their first one under any name with cx add.
+// CODEX_HOME/auth.json as the first managed account, named "primary". It backs
+// cx init and is a no-op when cx already manages accounts or when the system
+// has no ChatGPT login: cx never invents an account in that case, the user adds
+// their first one under any name with cx add.
 func bootstrapPrimaryAccount(p paths) (Account, bootstrapStatus, error) {
 	accounts, err := listAccounts(p)
 	if err != nil {

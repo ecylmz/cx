@@ -307,27 +307,28 @@ func printHelp() {
 	fmt.Print(`cx — minimal Codex account switcher
 
 Usage:
-  cx                                  live quota dashboard; starts unused windows
-  cx status [NAME] [--json]           live quota status; starts unused windows
-  cx add [NAME] [--expect EMAIL]      add account with Codex device auth
-  cx init                             import an existing Codex login as "primary" (run by the installer)
-  cx relogin NAME [--expect EMAIL]    refresh one account's credential safely
-  cx use [NAME] [--resume]            switch account; interactive if NAME omitted
-  cx auto                              keep or select the weakest usable account
-  cx current                          show active account
-  cx list                             list accounts without network access
-  cx rename OLD NEW
-  cx remove NAME
-  cx doctor
-  cx shell-init                       shell wrapper for deterministic Codex auth
-  cx update [--force]                 install latest GitHub release
-  cx version
+  cx                                 live quota dashboard; starts unused windows
+  cx status [NAME] [--json]          live quota status; starts unused windows
+  cx add [NAME] [--expect EMAIL]     add an account with Codex device auth
+  cx init                            import an existing Codex login as "primary"
+  cx relogin NAME [--expect EMAIL]   refresh one account's credential safely
+  cx use [NAME] [--resume]           switch account; interactive if NAME omitted
+  cx auto                            keep or switch to the weakest usable account
+  cx current                         show the active account
+  cx list                            list accounts without network access
+  cx rename OLD NEW                  rename an account
+  cx remove|rm NAME                  remove an account and its credential
+  cx doctor                          check codex, credential store, and accounts
+  cx shell-init                      print the shell wrapper for Codex auth
+  cx update [--force]                install the latest GitHub release
+  cx version                         print the cx version
 
-Add 'eval "$(cx shell-init)"' to your shell startup file. It keeps bare Codex launches on the selected auth.json instead of reusing a stale local app-server account.
+Notes:
+  Add 'eval "$(cx shell-init)"' to your shell startup file so a bare 'codex'
+  always uses the account cx selected instead of a stale app-server session.
 
-Use --expect EMAIL when adding or re-authorizing an account to reject a browser/device-auth login to the wrong ChatGPT account before its credential is saved.
-
-Dashboard keys: ↑/↓ or j/k select · enter switch · r refresh · q quit
+  Use --expect EMAIL with 'cx add' or 'cx relogin' to reject a device-auth
+  login to the wrong ChatGPT account before its credential is saved.
 `)
 }
 
