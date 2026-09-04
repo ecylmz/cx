@@ -110,6 +110,13 @@ func Main() {
 		fmt.Printf("%s refreshed credentials for %s (%s)\n", green("✓"), a.Name, emptyDash(a.Email))
 	case "use":
 		handleUse(p, args[1:])
+	case "auto":
+		if len(args) != 1 {
+			fatal(errors.New("usage: cx auto"))
+		}
+		if err := handleAuto(p); err != nil {
+			fatal(err)
+		}
 	case "status":
 		code := handleStatus(p, args[1:])
 		os.Exit(code)
@@ -304,6 +311,7 @@ Usage:
   cx init                             import an existing Codex login as "primary" (run by the installer)
   cx relogin NAME [--expect EMAIL]    refresh one account's credential safely
   cx use [NAME] [--resume]            switch account; interactive if NAME omitted
+  cx auto                              keep or select the weakest usable account
   cx current                          show active account
   cx list                             list accounts without network access
   cx rename OLD NEW
