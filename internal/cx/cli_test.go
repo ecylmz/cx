@@ -46,7 +46,7 @@ func TestPrintHelpListCurrentAndUse(t *testing.T) {
 	}
 
 	out := captureStdout(t, printHelp)
-	if !strings.Contains(out, "cx update") || !strings.Contains(out, "cx status") || !strings.Contains(out, "--expect EMAIL") {
+	if !strings.Contains(out, "cx update") || !strings.Contains(out, "cx status") || !strings.Contains(out, "cx auto") || !strings.Contains(out, "--expect EMAIL") {
 		t.Fatalf("help=%q", out)
 	}
 	out = captureStdout(t, func() { handleList(p) })
@@ -70,7 +70,7 @@ func TestPrintHelpListCurrentAndUse(t *testing.T) {
 func installActiveWindowCodex(t *testing.T) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(bin, 0700); err != nil {
+	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	script := `#!/bin/sh
@@ -86,7 +86,7 @@ if [ "$1" = "app-server" ]; then
 fi
 exit 2
 `
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -139,7 +139,7 @@ func TestHandleInitReportsAdoptionAndNoop(t *testing.T) {
 		t.Fatalf("init on unauthorized system=%q", out)
 	}
 
-	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "me@example.com"), 0600); err != nil {
+	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "me@example.com"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out = captureStdout(t, func() { handleInit(p) })

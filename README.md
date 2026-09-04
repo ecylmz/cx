@@ -48,9 +48,12 @@ Opening the interactive `cx` dashboard also starts any unused rolling quota wind
 
 Account switching is deliberately simple. `cx use NAME` validates the stored credential, atomically changes the shared `~/.codex/auth.json` symlink to the selected managed credential, updates cx state, and returns. It does not start Codex, probe app-server RPCs, restart daemons, kill processes, or alter session/history databases. The shell integration is what keeps subsequent bare `codex` TUI launches from attaching to stale app-server auth.
 
+`cx auto` keeps the active account while both its 5-hour and weekly quotas have capacity. If either quota is exhausted, it switches to the usable account with the least weekly quota remaining. If weekly quotas tie, cx compares the 5-hour quotas. If those quotas also tie, cx selects the oldest account. The command reads live quota data but does not start unused quota windows or use cached values. It does not switch and exits with status 1 if data is unavailable or all accounts are exhausted.
+
 ```sh
 cx                                      # dashboard
 cx status                               # live status for every account
+cx auto                                 # keep or select the weakest usable account
 cx use                                  # interactive account switch
 cx use primary                          # atomic auth.json symlink switch
 cx init                                 # import an existing Codex login as "primary" (the installer runs this)
