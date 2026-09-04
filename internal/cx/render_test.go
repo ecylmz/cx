@@ -136,3 +136,48 @@ func TestUsageLinePrintStatusAndJSON(t *testing.T) {
 		t.Fatalf("rows=%+v", rows)
 	}
 }
+
+func TestExhaustedWindowStartStaysOneQuietLine(t *testing.T) {
+	p := makeTestPaths(t)
+	a := Account{ID: "a", Name: "backup", AccountID: "acct"}
+	writeTestAccount(t, p, a)
+	_, skipped := classifyPrimeFailure(errQuotaExhausted)
+	r := UsageResult{
+		Account:      a,
+		Usage:        WeeklyUsage{WindowMinutes: 10080, ResetsAt: time.Now().Add(7 * 24 * time.Hour).Unix(), FetchedAt: time.Now()},
+		PrimeSkipped: skipped,
+	}
+
+	out := captureStdout(t, func() { printStatus(p, []Account{a}, []UsageResult{r}) })
+	if strings.Contains(out, "window start failed") {
+		t.Fatalf("an exhausted account must not be reported as a failure:\n%s", out)
+	}
+	notes := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "window not started") {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("want exactly one skip note, got %d:\n%s", notes, out)
+	}
+
+	frame, _ := renderDashboardFrame(p, []Account{a}, []UsageResult{r}, 0, "")
+	if strings.Contains(frame, "window start failed") {
+		t.Fatalf("dashboard reported a failure:\n%s", frame)
+	}
+	if !strings.Contains(frame, "window not started") {
+		t.Fatalf("dashboard dropped the skip note:\n%s", frame)
+	}
+}
+
+func TestSingleLineCollapsesRepeatedBackendErrors(t *testing.T) {
+	raw := "exit status 1: lse.\nERROR: You've hit your usage limit.\nERROR: You've hit your usage limit.\n"
+	got := singleLine(raw)
+	if strings.ContainsAny(got, "\n\r") {
+		t.Fatalf("still multi-line: %q", got)
+	}
+	if n := len([]rune(got)); n > 160 {
+		t.Fatalf("%d runes: %q", n, got)
+	}
+}

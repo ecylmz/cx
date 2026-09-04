@@ -3,10 +3,13 @@ package cx
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -105,83 +108,65 @@ while :; do sleep 1; done
 }
 
 func TestFetchUsageWithPrimingStartsWindowOnce(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell helper")
-	}
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(root, "primed-reset")
-	count := filepath.Join(root, "prime-count")
-	argsLog := filepath.Join(root, "prime-args")
-	script := `#!/bin/sh
-case "$1" in
-  app-server)
-    if [ -f "$CX_TEST_MARKER" ]; then
-      reset=$(cat "$CX_TEST_MARKER")
-    else
-      now=$(date +%s)
-      reset=$((now + 604800))
-    fi
-    IFS= read -r init
-    echo '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}'
-    IFS= read -r initialized
-    IFS= read -r request
-    echo "{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":0,\"windowDurationMins\":10080,\"resetsAt\":$reset},\"secondary\":null},\"rateLimitsByLimitId\":null,\"rateLimitResetCredits\":null}}"
-    while :; do sleep 1; done
-    ;;
-  exec)
-    now=$(date +%s)
-    echo $((now + 604800)) > "$CX_TEST_MARKER"
-    n=0
-    [ -f "$CX_TEST_COUNT" ] && n=$(cat "$CX_TEST_COUNT")
-    echo $((n + 1)) > "$CX_TEST_COUNT"
-    printf '%s\n' "$*" > "$CX_TEST_ARGS"
-    echo OK
-    ;;
-  *) exit 2 ;;
-esac
-`
-	fake := filepath.Join(bin, "codex")
-	if err := os.WriteFile(fake, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CX_TEST_MARKER", marker)
-	t.Setenv("CX_TEST_COUNT", count)
-	t.Setenv("CX_TEST_ARGS", argsLog)
-
-	p := paths{Home: root, CodexHome: filepath.Join(root, ".codex"), ConfigRoot: filepath.Join(root, "cfg"), DataRoot: filepath.Join(root, "data"), CacheRoot: filepath.Join(root, "cache")}
-	p.AccountsRoot = filepath.Join(p.DataRoot, "accounts")
-	if err := p.ensure(); err != nil {
-		t.Fatal(err)
-	}
+	p := makeTestPaths(t)
 	a := Account{ID: "id1", Name: "backup", AccountID: "acct", CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := os.MkdirAll(p.accountDir(a.ID), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
-		t.Fatal(err)
-	}
+	writeTestAccount(t, p, a)
+
+	var mu sync.Mutex
+	primes := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/usage", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		started := primes > 0
+		mu.Unlock()
+		// An unused rolling window reports zero use and a reset one full
+		// window ahead; a started one reports real use.
+		used, reset := 0, time.Now().Add(7*24*time.Hour).Unix()
+		if started {
+			used, reset = 3, time.Now().Add(5*24*time.Hour).Unix()
+		}
+		fmt.Fprintf(w, `{"rate_limit":{"secondary_window":{"used_percent":%d,"limit_window_seconds":604800,"reset_at":%d}}}`, used, reset)
+	})
+	mux.HandleFunc("/reset-credits", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"credits":[]}`))
+	})
+	mux.HandleFunc("/responses", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		primes++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"))
+	})
+	mux.HandleFunc("/models", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-mini","visibility":"list","priority":20,"supported_in_api":true}]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	oldUsage, oldCredits, oldClient := directUsageEndpoint, directResetCreditsEndpoint, directUsageHTTPClient
+	oldResponses, oldModels, oldPrimeClient := directResponsesEndpoint, directModelsEndpoint, primeHTTPClient
+	directUsageEndpoint = server.URL + "/usage"
+	directResetCreditsEndpoint = server.URL + "/reset-credits"
+	directUsageHTTPClient = server.Client()
+	directResponsesEndpoint = server.URL + "/responses"
+	directModelsEndpoint = server.URL + "/models"
+	primeHTTPClient = server.Client()
+	defer func() {
+		directUsageEndpoint, directResetCreditsEndpoint, directUsageHTTPClient = oldUsage, oldCredits, oldClient
+		directResponsesEndpoint, directModelsEndpoint, primeHTTPClient = oldResponses, oldModels, oldPrimeClient
+	}()
+	// Priming must not depend on a codex process being installed.
+	t.Setenv("PATH", t.TempDir())
 
 	rs := fetchAllUsageWithPriming(p, []Account{a})
 	if len(rs) != 1 || rs[0].Err != "" || rs[0].PrimeErr != "" {
 		t.Fatalf("unexpected result: %+v", rs)
 	}
-	if !rs[0].Usage.WindowStarted {
-		t.Fatal("weekly window should be marked started after real turn")
+	if !rs[0].Usage.WindowStarted || !rs[0].Primed {
+		t.Fatalf("weekly window should be started after the priming turn: %+v", rs[0])
 	}
-	b, err := os.ReadFile(count)
-	if err != nil || strings.TrimSpace(string(b)) != "1" {
-		t.Fatalf("prime count=%q err=%v", b, err)
-	}
-	args, _ := os.ReadFile(argsLog)
-	for _, want := range []string{"exec", "--ephemeral", "--ignore-user-config", "--sandbox read-only"} {
-		if !strings.Contains(string(args), want) {
-			t.Fatalf("prime args missing %q: %s", want, args)
-		}
+	if primes != 1 {
+		t.Fatalf("primes=%d", primes)
 	}
 
 	accounts, err := listAccounts(p)
@@ -192,8 +177,7 @@ esac
 	if rs[0].PrimeErr != "" || !rs[0].Usage.WindowStarted {
 		t.Fatalf("second result: %+v", rs[0])
 	}
-	b, _ = os.ReadFile(count)
-	if strings.TrimSpace(string(b)) != "1" {
-		t.Fatalf("window was primed more than once: %s", b)
+	if primes != 1 {
+		t.Fatalf("window was primed more than once: primes=%d", primes)
 	}
 }
