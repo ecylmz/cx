@@ -215,8 +215,8 @@ func TestHelpScreenOpensAndAnyKeyCloses(t *testing.T) {
 
 	v := layoutTestView(t, 2, 0, termSize{rows: 40, cols: 100})
 	out := captureStdout(t, func() {
-		if action, _ := applyKey(&v, "?", dashboardLayout{}, false); action != "" || !v.help {
-			t.Fatalf("? should open help: action=%q help=%v", action, v.help)
+		if action, _ := applyKey(&v, "?", dashboardLayout{}, false); action != "" || v.overlay != overlayKeys {
+			t.Fatalf("? should open help: action=%q overlay=%v", action, v.overlay)
 		}
 	})
 	for _, want := range []string{"cx", "keys", "PgUp", "Ctrl+C", "press any key"} {
@@ -226,10 +226,236 @@ func TestHelpScreenOpensAndAnyKeyCloses(t *testing.T) {
 	}
 	captureStdout(t, func() {
 		// Every key leaves help, including one that would otherwise quit.
-		if action, _ := applyKey(&v, "q", dashboardLayout{}, false); action != "" || v.help {
-			t.Fatalf("any key should close help: action=%q help=%v", action, v.help)
+		if action, _ := applyKey(&v, "q", dashboardLayout{}, false); action != "" || v.overlay != overlayNone {
+			t.Fatalf("any key should close help: action=%q overlay=%v", action, v.overlay)
 		}
 	})
+}
+
+func TestBankedScreenOpensAndAnyKeyCloses(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	now := time.Now()
+	v := layoutTestView(t, 3, 1, termSize{rows: 40, cols: 100})
+	v.results[0].BankedLoaded = true
+	v.results[0].BankedResets = []BankedReset{
+		{ID: "a", ExpiresAt: now.Add(2 * time.Hour).Format(time.RFC3339)},
+		{ID: "b", ExpiresAt: now.Add(20 * 24 * time.Hour).Format(time.RFC3339)},
+	}
+	v.results[1].BankedLoaded = true
+	v.results[2].BankedLoaded = true
+	v.results[2].BankedErr = "401 unauthorized"
+
+	out := captureStdout(t, func() {
+		if action, _ := applyKey(&v, "b", dashboardLayout{}, false); action != "" || v.overlay != overlayBanked {
+			t.Fatalf("b should open the banked screen: action=%q overlay=%v", action, v.overlay)
+		}
+	})
+	// Every account is listed, whether it has resets, none, or a failed read.
+	for _, want := range []string{"banked resets", "account0", "2 left", "account1", "none", "account2", "unavailable", "press any key"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("banked screen missing %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, bankedPip); n != 2 {
+		t.Fatalf("want one row per reset, got %d pips:\n%s", n, out)
+	}
+
+	captureStdout(t, func() {
+		if action, _ := applyKey(&v, "q", dashboardLayout{}, false); action != "" || v.overlay != overlayNone {
+			t.Fatalf("any key should close the banked screen: action=%q overlay=%v", action, v.overlay)
+		}
+	})
+}
+
+// The banked axis reads as the third meter of the block, so nothing may come
+// between it and the two quota lines above it.
+func TestBankedLineStaysWithTheQuotaMeters(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	v := layoutTestView(t, 1, 0, termSize{rows: 40, cols: 100})
+	v.results[0].Primed = true // Adds a note that used to be drawn above banked.
+	v.results[0].BankedLoaded = true
+	v.results[0].BankedResets = []BankedReset{{ID: "a", ExpiresAt: time.Now().Add(9 * 24 * time.Hour).Format(time.RFC3339)}}
+
+	block := accountBlock(v, 0)
+	weekly, banked := -1, -1
+	for i, line := range block {
+		switch {
+		case strings.Contains(line, "weekly"):
+			weekly = i
+		case strings.Contains(line, "banked"):
+			banked = i
+		}
+	}
+	if weekly < 0 || banked != weekly+1 {
+		t.Fatalf("banked should follow weekly directly, weekly=%d banked=%d:\n%s", weekly, banked, strings.Join(block, "\n"))
+	}
+}
+
+// The banked screen does not scroll, so a listing too tall for the terminal has
+// to be cut deliberately — and the note has to count resets, not rendered lines.
+// With no banked resets anywhere, b would open a screen listing nothing, so the
+// key is inert and neither the footer nor the help screen mentions it.
+func TestBankedKeyIsInertWithoutAnyBankedResets(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	v := layoutTestView(t, 3, 0, termSize{rows: 40, cols: 100})
+	for i := range v.results {
+		v.results[i].BankedLoaded = true // Fetched, and there is nothing to show.
+	}
+	captureStdout(t, func() {
+		if action, _ := applyKey(&v, "b", dashboardLayout{}, false); action != "" || v.overlay != overlayNone {
+			t.Fatalf("b should do nothing: action=%q overlay=%v", action, v.overlay)
+		}
+	})
+	frame, _ := renderDashboardFrame(v)
+	if strings.Contains(frame, "b banked") {
+		t.Fatalf("the footer should not offer a key that does nothing:\n%s", frame)
+	}
+	if help := renderHelpScreen(v.size, bankedUIActive(v.results)); strings.Contains(help, "banked reset dates") {
+		t.Fatalf("the help screen should not list it either:\n%s", help)
+	}
+
+	// One reset on one account is enough to bring the whole thing back.
+	v.results[2].BankedResets = []BankedReset{
+		{ID: "a", ExpiresAt: time.Now().Add(9 * 24 * time.Hour).Format(time.RFC3339)},
+	}
+	captureStdout(t, func() {
+		if action, _ := applyKey(&v, "b", dashboardLayout{}, false); action != "" || v.overlay != overlayBanked {
+			t.Fatalf("b should open: action=%q overlay=%v", action, v.overlay)
+		}
+	})
+	v.overlay = overlayNone
+	if frame, _ = renderDashboardFrame(v); !strings.Contains(frame, "b banked") {
+		t.Fatalf("the footer should offer the key again:\n%s", frame)
+	}
+}
+
+func TestBankedScreenCutsToFitAndCountsTheResetsItHid(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	now := time.Now()
+	v := layoutTestView(t, 4, 0, termSize{rows: 11, cols: 100})
+	for i := range v.results {
+		v.results[i].BankedLoaded = true
+		v.results[i].BankedResets = []BankedReset{
+			{ID: "x", ExpiresAt: now.Add(5 * 24 * time.Hour).Format(time.RFC3339)},
+			{ID: "y", ExpiresAt: now.Add(20 * 24 * time.Hour).Format(time.RFC3339)},
+		}
+	}
+	// 4 accounts × (1 header + 2 resets) = 12 rows into 11 - 5 = 6.
+	screen := renderBankedScreen(v)
+	if got := strings.Count(screen, "\n"); got > v.size.rows-1 {
+		t.Fatalf("screen is %d rows and overflows a %d-row terminal:\n%s", got, v.size.rows, screen)
+	}
+	// Five rows are kept — account0's header and both its resets, then account1's
+	// header and its first reset — which leaves five resets unlisted.
+	if !strings.Contains(screen, "5 more resets") {
+		t.Fatalf("the note should count hidden resets, not lines:\n%s", screen)
+	}
+
+	// A terminal with no room at all still must not write past its last row —
+	// and still has to say the listing was cut, or it reads as no banked resets.
+	v.size = termSize{rows: 4, cols: 100}
+	screen = renderBankedScreen(v)
+	if got := strings.Count(screen, "\n"); got > v.size.rows-1 {
+		t.Fatalf("screen is %d rows on a %d-row terminal:\n%s", got, v.size.rows, screen)
+	}
+	if !strings.Contains(screen, "8 more resets") {
+		t.Fatalf("a screen with no room for the listing still owes the count:\n%s", screen)
+	}
+}
+
+// The help screen does not scroll either, and it grows every time a key is
+// added, so it has to be cut to the terminal the same way.
+func TestHelpScreenCutsToFit(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	full := renderHelpScreen(termSize{rows: 40, cols: 100}, true)
+	if !strings.Contains(full, "b ") || !strings.Contains(full, "q  ·  Esc") {
+		t.Fatalf("a tall terminal should list every key:\n%s", full)
+	}
+
+	for _, rows := range []int{13, 8, 4} {
+		size := termSize{rows: rows, cols: 100}
+		screen := renderHelpScreen(size, true)
+		if got := strings.Count(screen, "\n"); got > size.rows-1 {
+			t.Fatalf("help screen is %d rows on a %d-row terminal:\n%s", got, size.rows, screen)
+		}
+		if !strings.Contains(screen, "more keys") {
+			t.Fatalf("a cut help screen owes the count of what it dropped:\n%s", screen)
+		}
+		if !strings.Contains(screen, "cx") || !strings.Contains(screen, "press any key") {
+			t.Fatalf("the frame should survive the cut:\n%s", screen)
+		}
+	}
+}
+
+// fitCells trims the tail of the footer, which is where the key that gets you
+// out lives, so a narrow terminal has to give up hints deliberately instead.
+func TestFooterGivesUpHintsRatherThanTheQuitKey(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	v := layoutTestView(t, 2, 0, termSize{rows: 40, cols: 100})
+	v.results[0].BankedLoaded = true
+	v.results[0].BankedResets = []BankedReset{
+		{ID: "a", ExpiresAt: time.Now().Add(9 * 24 * time.Hour).Format(time.RFC3339)},
+	}
+
+	for _, cols := range []int{100, 74, 73, 64, 50, 30, 20} {
+		line := dashboardKeys(v.results, cols)
+		if got := visibleCells(line); cols >= 20 && got > cols {
+			t.Fatalf("cols=%d: footer is %d cells and would be cut: %q", cols, got, line)
+		}
+		if !strings.Contains(line, "q quit") || !strings.Contains(line, "? keys") {
+			t.Fatalf("cols=%d: the way out and the full key list must survive: %q", cols, line)
+		}
+	}
+	// The niche screen is the first hint given up, not the last.
+	if wide, tight := dashboardKeys(v.results, 100), dashboardKeys(v.results, 73); !strings.Contains(wide, "b banked") || strings.Contains(tight, "b banked") {
+		t.Fatalf("wide=%q tight=%q", wide, tight)
+	}
+}
+
+// Both overlays keep the row of headroom they document, however short the
+// terminal — the frame's last newline would otherwise scroll the screen.
+func TestOverlaysKeepTheirHeadroomOnAShortTerminal(t *testing.T) {
+	old := useColor
+	useColor = false
+	defer func() { useColor = old }()
+
+	now := time.Now()
+	v := layoutTestView(t, 3, 0, termSize{cols: 100})
+	for i := range v.results {
+		v.results[i].BankedLoaded = true
+		v.results[i].BankedResets = []BankedReset{
+			{ID: "x", ExpiresAt: now.Add(5 * 24 * time.Hour).Format(time.RFC3339)},
+		}
+	}
+	for _, rows := range []int{3, 4, 5, 6, 8, 13, 40} {
+		v.size = termSize{rows: rows, cols: 100}
+		for name, screen := range map[string]string{
+			"keys":   renderHelpScreen(v.size, true),
+			"banked": renderBankedScreen(v),
+		} {
+			if got := strings.Count(screen, "\n"); got > rows-1 {
+				t.Fatalf("%s screen is %d rows on a %d-row terminal:\n%s", name, got, rows, screen)
+			}
+		}
+	}
 }
 
 func TestTitleNamesTheActiveAccountAndTheDataAge(t *testing.T) {

@@ -69,8 +69,13 @@ func TestDashboardFrameTracksVariableHeightRows(t *testing.T) {
 	v := newDashboardView(p, accounts, results, 0)
 	v.footer = "live quota · live banked resets"
 	_, layout := renderDashboardFrame(v)
-	if len(layout.headerRows) != 2 || layout.headerRows[0] != 3 || layout.headerRows[1] <= layout.headerRows[0]+3 {
+	if len(layout.headerRows) != 2 || layout.headerRows[0] != 3 {
 		t.Fatalf("unexpected header rows: %v", layout.headerRows)
+	}
+	// Account a carries a banked line and b does not, so the second header sits
+	// exactly as far down as the first block is tall.
+	if got, want := layout.headerRows[1]-layout.headerRows[0], len(accountBlock(v, 0)); got != want {
+		t.Fatalf("header rows %v do not follow block heights: gap=%d block=%d", layout.headerRows, got, want)
 	}
 }
 

@@ -359,55 +359,283 @@ func usageLinesWidth(r UsageResult, cols int) []string {
 	return lines
 }
 
-func bankedExpiryText(raw string, now time.Time) string {
-	return bankedExpiryTextWidth(raw, now, false)
+// bankedHorizon is the life of a banked reset. The axis below spans exactly this
+// much time on every account, so a pip's column means the same day down the
+// whole list: the axes can be read against each other instead of each carrying
+// its own scale.
+const bankedHorizon = 30 * 24 * time.Hour
+
+const (
+	bankedPip      = "●"
+	bankedPipStack = "◉"
+	bankedRule     = "─"
+	bankedTick     = "┼"
+)
+
+// pipStyle is how urgent one cell of the axis is, kept as a value rather than a
+// styling function so a run of equally styled cells can be written under a
+// single escape sequence instead of one per character.
+type pipStyle int
+
+const (
+	pipPlain pipStyle = iota
+	pipDim
+	pipWarn
+	pipUrgent
+)
+
+func (s pipStyle) apply(text string) string {
+	switch s {
+	case pipDim:
+		return dim(text)
+	case pipWarn:
+		return yellow(text)
+	case pipUrgent:
+		return red(text)
+	default:
+		return text
+	}
 }
 
-func bankedExpiryTextWidth(raw string, now time.Time, compact bool) string {
-	if strings.TrimSpace(raw) == "" {
-		return "expires unknown"
+// bankedPipStyle colours a reset the way quotaColor colours a percentage: red
+// once it is within a day of being lost, yellow within a week.
+func bankedPipStyle(d time.Duration) pipStyle {
+	switch {
+	case d < 24*time.Hour:
+		return pipUrgent
+	case d < 7*24*time.Hour:
+		return pipWarn
+	default:
+		return pipPlain
 	}
-	t, ok := bankedExpiry(raw)
+}
+
+// bankedColumn maps a time from now onto the axis. Anything already past sits in
+// the first cell and anything beyond the horizon in the last, so a stale reading
+// still lands on the axis rather than off the end of it.
+func bankedColumn(d time.Duration, width int) int {
+	if d <= 0 {
+		return 0
+	}
+	return min(int(float64(d)/float64(bankedHorizon)*float64(width)), width-1)
+}
+
+// bankedAxis draws the expiries into the meter column, where position carries
+// when a reset goes rather than its place in a list. Ticks mark the week
+// boundaries, and a cell holding more than one reset is drawn filled — otherwise
+// the axis and the count beside it would disagree about how many there are. It
+// returns the styled line and the plain text behind it, for padStyled.
+func bankedAxis(resets []BankedReset, now time.Time, width int) (styled, plain string) {
+	if width <= 0 {
+		return "", ""
+	}
+	count := make([]int, width)
+	soonest := make([]time.Duration, width)
+	for _, r := range resets {
+		t, ok := bankedExpiry(r.ExpiresAt)
+		if !ok {
+			continue // An undated reset still counts on the right; it cannot be placed.
+		}
+		d := t.Sub(now)
+		col := bankedColumn(d, width)
+		if count[col] == 0 || d < soonest[col] {
+			soonest[col] = d
+		}
+		count[col]++
+	}
+	ticks := make(map[int]bool)
+	for at := 7 * 24 * time.Hour; at < bankedHorizon; at += 7 * 24 * time.Hour {
+		if col := bankedColumn(at, width); col > 0 {
+			ticks[col] = true
+		}
+	}
+
+	var out, text strings.Builder
+	run, runStyle := "", pipDim
+	flush := func() {
+		if run != "" {
+			out.WriteString(runStyle.apply(run))
+			run = ""
+		}
+	}
+	for i := range width {
+		glyph, style := bankedRule, pipDim
+		switch {
+		case count[i] == 1:
+			glyph, style = bankedPip, bankedPipStyle(soonest[i])
+		case count[i] > 1:
+			glyph, style = bankedPipStack, bankedPipStyle(soonest[i])
+		case ticks[i]:
+			glyph = bankedTick
+		}
+		if style != runStyle {
+			flush()
+			runStyle = style
+		}
+		run += glyph
+		text.WriteString(glyph)
+	}
+	flush()
+	return out.String(), text.String()
+}
+
+// bankedAvailable drops the resets whose expiry has passed. The backend only
+// returns credits it still counts as available, so an expired one is the clock
+// on screen having run past the last fetch rather than something the account
+// still holds. Every part of the banked display works from this list, so the
+// pips, the count and the countdown cannot disagree about what is left.
+func bankedAvailable(resets []BankedReset, now time.Time) []BankedReset {
+	live := make([]BankedReset, 0, len(resets))
+	for _, r := range resets {
+		if t, ok := bankedExpiry(r.ExpiresAt); ok && !t.After(now) {
+			continue
+		}
+		live = append(live, r)
+	}
+	return live
+}
+
+// bankedUndated counts the resets the backend gave no expiry for. They cannot be
+// placed on the axis, so the count cell has to name them: otherwise the pips
+// could be counted to a different total than the number printed beside them.
+func bankedUndated(resets []BankedReset) int {
+	n := 0
+	for _, r := range resets {
+		if _, ok := bankedExpiry(r.ExpiresAt); !ok {
+			n++
+		}
+	}
+	return n
+}
+
+// bankedCountdown is the one banked date that turns into a decision: when the
+// next reset goes. The rest are inventory, and live behind `b` and in
+// `cx status`. Resets arrive sorted by expiry, but the soonest one can already
+// have passed — the list is only refetched on demand, while the clock on screen
+// keeps running — so this walks to the first reset still in the future rather
+// than reporting the head of the list as gone while later ones are live.
+func bankedCountdown(resets []BankedReset, now time.Time, compact bool) string {
+	lead := "next in "
+	// A narrow terminal gives up the word, not the number: how long the next
+	// reset has left is what this line is read for.
+	if compact {
+		lead = "in "
+	}
+	dated := false
+	for _, r := range resets {
+		t, ok := bankedExpiry(r.ExpiresAt)
+		if !ok {
+			continue // Counted by bankedUndated; it has no countdown to report.
+		}
+		dated = true
+		if d := t.Sub(now); d > 0 {
+			return lead + relativeDuration(d)
+		}
+	}
+	if dated {
+		return "expired"
+	}
+	return ""
+}
+
+// bankedLine is the third meter line of an account block, laid out in the same
+// cells as the two quota lines above it: the axis where the bar goes, the count
+// where the percentage goes, the countdown where the reset time goes.
+func bankedLine(resets []BankedReset, now time.Time, barWidth int, compact bool) string {
+	styled, plain := bankedAxis(resets, now, barWidth)
+	line := fmt.Sprintf("%s  %s  %s", padCell("banked", 6), padStyled(styled, plain, barWidth),
+		fmt.Sprintf("%11s", bankedCount(resets)))
+
+	if tail := bankedCountdown(resets, now, compact); tail != "" {
+		line += "   " + dim(tail)
+	}
+	return line
+}
+
+// bankedCount fills the value cell, where the two quota lines print their
+// percentage: how many resets are banked, and how many of those the axis could
+// not place. The undated ones are named inside the cell rather than in a note
+// after it, because a note is the first thing a narrow terminal cuts — and
+// cutting it is what would leave the pips and the count disagreeing on screen
+// with nothing left to explain why.
+func bankedCount(resets []BankedReset) string {
+	count := fmt.Sprintf("%d left", len(resets))
+	if n := bankedUndated(resets); n > 0 {
+		count += fmt.Sprintf(" · %d?", n)
+	}
+	return count
+}
+
+// bankedDateCell holds the timestamp column of a full listing, wide enough for
+// every layout localDateLayout can return.
+const bankedDateCell = 22
+
+// bankedDetailRow is one reset in a full listing: a pip carrying the same
+// urgency colour the axis gives it, the date it goes, and the countdown.
+func bankedDetailRow(reset BankedReset, now time.Time) string {
+	t, ok := bankedExpiry(reset.ExpiresAt)
 	if !ok {
-		return "expires " + raw
+		return dim(bankedPip) + "  " + dim("expires unknown")
 	}
 	d := t.Sub(now)
-	if compact {
-		if d > 0 {
-			return "expires in " + relativeDuration(d)
-		}
-		return "expired " + shortDuration(-d) + " ago"
-	}
-	exact := t.Local().Format(localDateLayout(localeName()))
+	row := bankedPipStyle(d).apply(bankedPip) + "  " + padCell(t.Local().Format(localDateLayout(localeName())), bankedDateCell)
 	if d > 0 {
-		return "expires " + exact + " · in " + relativeDuration(d)
+		return row + dim("in "+relativeDuration(d))
 	}
-	return "expired " + exact + " · " + shortDuration(-d) + " ago"
+	return row + dim("expired "+shortDuration(-d)+" ago")
+}
+
+// bankedUnavailable is the line an account gets when its banked resets could not
+// be read at all, laid out in the same cells as the meter it replaces.
+func bankedUnavailable(err string) string {
+	return padCell("banked", 6) + "  " + yellow("unavailable") + " · " + dim(err)
 }
 
 func bankedResetLines(r UsageResult, indent string) []string {
 	return bankedResetLinesWidth(r, indent, 0)
 }
 
+// bankedResetLinesWidth renders an account's banked resets for the dashboard:
+// one line, whatever the count. The dates behind it are a keypress away.
 func bankedResetLinesWidth(r UsageResult, indent string, cols int) []string {
 	if !r.BankedLoaded {
 		return nil
 	}
 	if r.BankedErr != "" {
-		return []string{indent + yellow("banked resets unavailable") + " · " + dim(r.BankedErr)}
+		return []string{indent + bankedUnavailable(r.BankedErr)}
 	}
-	if len(r.BankedResets) == 0 {
+	now := time.Now()
+	resets := bankedAvailable(r.BankedResets, now)
+	if len(resets) == 0 {
 		return nil
 	}
-	lines := []string{indent + fmt.Sprintf("banked resets  %d", len(r.BankedResets))}
+	return []string{indent + bankedLine(resets, now, barWidthFor(cols), cols > 0 && cols < compactBelowCols)}
+}
+
+// bankedAxisIndent lines a detail row up with the first column of the axis
+// above it: the label cell plus the gap that follows it.
+const bankedAxisIndent = 8
+
+// bankedStatusLines is the complete listing `cx status` prints — the dashboard's
+// axis line, then every reset under it. The dashboard is glanceable; status is
+// the full record.
+func bankedStatusLines(r UsageResult, indent string) []string {
+	if !r.BankedLoaded {
+		return nil
+	}
+	if r.BankedErr != "" {
+		return []string{indent + bankedUnavailable(r.BankedErr)}
+	}
+	// One reading of the clock for the axis and the dates under it, so a reset
+	// cannot be counted on one line and missing from the next.
 	now := time.Now()
-	for i, reset := range r.BankedResets {
-		label := strings.TrimSpace(reset.Title)
-		if label == "" {
-			label = fmt.Sprintf("reset %d", i+1)
-		}
-		compact := cols > 0 && cols < compactBelowCols
-		lines = append(lines, indent+"  "+label+" · "+dim(bankedExpiryTextWidth(reset.ExpiresAt, now, compact)))
+	resets := bankedAvailable(r.BankedResets, now)
+	if len(resets) == 0 {
+		return nil
+	}
+	lines := []string{indent + bankedLine(resets, now, defaultBarCells, false)}
+	for _, reset := range resets {
+		lines = append(lines, indent+strings.Repeat(" ", bankedAxisIndent)+bankedDetailRow(reset, now))
 	}
 	return lines
 }
@@ -429,10 +657,21 @@ func printStatus(p paths, results []UsageResult) {
 			fmt.Printf("  %s", dim(r.Account.Email))
 		}
 		fmt.Println()
-		if r.Err == "" {
+		banked := func() {
+			for _, line := range bankedStatusLines(r, "  ") {
+				fmt.Println(line)
+			}
+		}
+		// The banked axis closes the meter group, and its dates hang under it;
+		// the note about how fresh the numbers are comes after all of them.
+		meters := func() {
 			for _, line := range usageLines(r) {
 				fmt.Println("  " + line)
 			}
+			banked()
+		}
+		if r.Err == "" {
+			meters()
 			if r.PrimeErr != "" {
 				fmt.Printf("  %s · %s\n", red("window start failed"), r.PrimeErr)
 			} else if r.PrimeSkipped != "" {
@@ -443,15 +682,11 @@ func printStatus(p paths, results []UsageResult) {
 				fmt.Println(dim("  live · updated just now"))
 			}
 		} else if !r.Usage.FetchedAt.IsZero() {
-			for _, line := range usageLines(r) {
-				fmt.Println("  " + line)
-			}
+			meters()
 			fmt.Printf("  %s cached %s ago · %s\n", yellow("stale"), shortDuration(time.Since(r.Usage.FetchedAt)), r.Err)
 		} else {
 			fmt.Printf("  %s %s\n", red("unavailable"), r.Err)
-		}
-		for _, line := range bankedResetLines(r, "  ") {
-			fmt.Println(line)
+			banked()
 		}
 		if i < len(results)-1 {
 			fmt.Println()

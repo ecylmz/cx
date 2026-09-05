@@ -71,8 +71,18 @@ type dashboardView struct {
 	footer      string
 	size        termSize
 	refreshedAt time.Time
-	help        bool
+	overlay     overlay
 }
+
+// overlay is the full-screen layer drawn instead of the account list. Any key
+// dismisses one, so the dashboard only ever has to know which is up.
+type overlay int
+
+const (
+	overlayNone overlay = iota
+	overlayKeys
+	overlayBanked
+)
 
 func newDashboardView(p paths, accounts []Account, results []UsageResult, sel int) dashboardView {
 	st, _ := loadState(p)
@@ -330,8 +340,8 @@ func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) 
 // redrawing whatever the key changed. While a refresh is still streaming, the
 // keys that would act on half-fetched data are ignored rather than queued.
 func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing bool) (string, dashboardLayout) {
-	if v.help {
-		v.help = false
+	if v.overlay != overlayNone {
+		v.overlay = overlayNone
 		return "", drawDashboardFrame(*v)
 	}
 	switch key {
@@ -347,8 +357,14 @@ func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing b
 		return "refresh", layout
 	case "q", "esc", "ctrl-c", "ctrl-d":
 		return "quit", layout
+	case "b":
+		if !bankedUIActive(v.results) {
+			return "", layout
+		}
+		v.overlay = overlayBanked
+		return "", drawDashboardFrame(*v)
 	case "?":
-		v.help = true
+		v.overlay = overlayKeys
 		return "", drawDashboardFrame(*v)
 	}
 	oldSel := v.sel
@@ -412,8 +428,11 @@ func drawDashboardFrame(v dashboardView) dashboardLayout {
 }
 
 func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
-	if v.help {
-		return renderHelpScreen(v.size), dashboardLayout{}
+	switch v.overlay {
+	case overlayKeys:
+		return renderHelpScreen(v.size, bankedUIActive(v.results)), dashboardLayout{}
+	case overlayBanked:
+		return renderBankedScreen(v), dashboardLayout{}
 	}
 
 	blocks := make([][]string, len(v.results))
@@ -427,7 +446,7 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 	// The footer row stays present even when there is nothing to say, so the
 	// frame does not lose a line — and jump — the moment a refresh finishes.
 	foot := []string{
-		dim(" ↑/↓ or j/k select   enter switch   r refresh   ? keys   q quit"),
+		dim(dashboardKeys(v.results, v.size.cols)),
 		dim(" " + v.footer),
 	}
 
@@ -535,20 +554,26 @@ func accountBlock(v dashboardView, i int) []string {
 	indent := gutter(selected, 3)
 	r := v.results[i]
 	lines := []string{dashboardAccountHeader(v.state, r.Account, selected)}
-	usage := func() {
+	banked := func() {
+		lines = append(lines, bankedResetLinesWidth(r, indent, v.size.cols)...)
+	}
+	// The banked axis is the block's third meter line, so it is drawn with the
+	// other two rather than below whatever note follows them.
+	meters := func() {
 		for _, line := range usageLinesWidth(r, v.size.cols) {
 			lines = append(lines, indent+line)
 		}
+		banked()
 	}
 
 	if refreshing, note := refreshingStatus(r.Err); refreshing {
-		usage()
+		meters()
 		if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
 			note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
 		}
 		lines = append(lines, indent+cyan(note))
 	} else if r.Err == "" {
-		usage()
+		meters()
 		switch {
 		case r.PrimeErr != "":
 			lines = append(lines, indent+red("window start failed")+" "+r.PrimeErr)
@@ -558,34 +583,211 @@ func accountBlock(v dashboardView, i int) []string {
 			lines = append(lines, indent+dim("quota windows started just now"))
 		}
 	} else if !r.Usage.FetchedAt.IsZero() {
-		usage()
+		meters()
 		lines = append(lines, indent+yellow("stale")+" · cached "+shortDuration(time.Since(r.Usage.FetchedAt))+" ago")
 	} else {
 		lines = append(lines, indent+red("unavailable")+" "+r.Err)
+		banked()
 	}
-
-	lines = append(lines, bankedResetLinesWidth(r, indent, v.size.cols)...)
 	return append(lines, "")
 }
 
-func renderHelpScreen(size termSize) string {
-	rows := [][2]string{
+// keyHint is one entry of the footer. rank orders which hints are given up on a
+// terminal too narrow for the whole line; rank 0 is never given up.
+type keyHint struct {
+	text string
+	rank int
+}
+
+// dashboardKeys builds the footer. Letting fitCells trim it would cut the tail,
+// which is where the key that gets you out lives, so hints are dropped from the
+// line deliberately: the niche screen first, then the keys a terminal user tries
+// anyway. What survives always ends with the full key list and quit.
+func dashboardKeys(results []UsageResult, cols int) string {
+	hints := []keyHint{
+		{"↑/↓ or j/k select", 2},
+		{"enter switch", 1},
+		{"r refresh", 3},
+	}
+	// No banked resets anywhere, no key advertised — the same gate the key itself
+	// and the help screen use.
+	if bankedUIActive(results) {
+		hints = append(hints, keyHint{"b banked", 4})
+	}
+	hints = append(hints, keyHint{"? keys", 0}, keyHint{"q quit", 0})
+
+	render := func() string {
+		parts := make([]string, len(hints))
+		for i, h := range hints {
+			parts[i] = h.text
+		}
+		return " " + strings.Join(parts, "   ")
+	}
+	line := render()
+	for cols > 0 && visibleCells(line) > cols {
+		worst, at := 0, -1
+		for i, h := range hints {
+			if h.rank > worst {
+				worst, at = h.rank, i
+			}
+		}
+		if at < 0 {
+			break // Only the hints that never go are left; fitCells takes it from here.
+		}
+		hints = append(hints[:at], hints[at+1:]...)
+		line = render()
+	}
+	return line
+}
+
+func renderHelpScreen(size termSize, banked bool) string {
+	keys := [][2]string{
 		{"↑ ↓  ·  k j", "move the cursor"},
 		{"PgUp PgDn", "jump " + fmt.Sprint(pageJump) + " accounts"},
 		{"g  ·  Home", "first account"},
 		{"G  ·  End", "last account"},
 		{"enter", "switch to the selected account"},
 		{"r", "refresh quota and banked resets"},
-		{"?", "this screen"},
-		{"q  ·  Esc  ·  Ctrl+C", "quit"},
 	}
+	if banked {
+		keys = append(keys, [2]string{"b", "banked reset dates, every account"})
+	}
+	keys = append(keys,
+		[2]string{"?", "this screen"},
+		[2]string{"q  ·  Esc  ·  Ctrl+C", "quit"},
+	)
+	rows := make([]string, 0, len(keys)+1)
+	for _, key := range keys {
+		rows = append(rows, "   "+padCell(key[0], 22)+dim(key[1]))
+	}
+	fit, spacing := overlayFit(len(rows), size.rows)
+	if fit < len(rows) {
+		kept := max(fit-1, 0)
+		hidden := len(rows) - kept
+		rows = rows[:kept:kept]
+		// A budget of no rows has no room for the note about them either.
+		if fit > 0 {
+			rows = append(rows, dim(fmt.Sprintf("   … %d more keys", hidden)))
+		}
+	}
+	return overlayFrame(" "+bold("cx")+"  keys", rows, size, spacing)
+}
+
+// overlayFit reports how many listing rows an overlay screen can show and
+// whether the blank lines around the listing still fit. Neither overlay
+// scrolls, so what does not fit has to be cut deliberately. The frame spends
+// four rows on its title, its footer and those two blanks, and one more is left
+// as the same headroom the dashboard keeps: the frame's last newline would
+// otherwise push the screen up by one. A terminal too short even for that gives
+// the blanks up first — they are spacing, and the listing is the screen.
+func overlayFit(rowCount, termRows int) (fit int, spacing bool) {
+	if termRows <= 0 {
+		return rowCount, true
+	}
+	if avail := termRows - 5; avail >= 1 {
+		return min(avail, rowCount), true
+	}
+	return min(max(termRows-3, 0), rowCount), false
+}
+
+// overlayFrame draws an overlay screen: a title, the listing, and the footer
+// every overlay shares, spaced apart when overlayFit says there is room.
+func overlayFrame(title string, rows []string, size termSize, spacing bool) string {
 	var b strings.Builder
-	b.WriteString(fitCells(" "+bold("cx")+"  keys", size.cols) + "\n\n")
-	for _, row := range rows {
-		b.WriteString(fitCells("   "+padCell(row[0], 22)+dim(row[1]), size.cols) + "\n")
+	b.WriteString(fitCells(title, size.cols) + "\n")
+	if spacing {
+		b.WriteString("\n")
 	}
-	b.WriteString("\n" + fitCells(dim(" press any key to go back"), size.cols) + "\n")
+	for _, row := range rows {
+		b.WriteString(fitCells(row, size.cols) + "\n")
+	}
+	if spacing {
+		b.WriteString("\n")
+	}
+	b.WriteString(fitCells(dim(" press any key to go back"), size.cols) + "\n")
 	return b.String()
+}
+
+// renderBankedScreen is the detail behind the axis on every account block: the
+// dates the pips stand for. It lists every account rather than the selected one,
+// because the question it answers — which account's reserve do I spend before it
+// goes — is asked across the list, not within one row of it.
+// bankedUIActive reports whether banked resets are worth a key at all. With none
+// anywhere, `b` opens a screen that says "none" five times over, so the key does
+// nothing and neither the footer nor the help screen offers it.
+func bankedUIActive(results []UsageResult) bool {
+	now := time.Now()
+	for _, r := range results {
+		if len(bankedAvailable(r.BankedResets, now)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func renderBankedScreen(v dashboardView) string {
+	// A row remembers whether it is a reset, so a listing that has to be cut can
+	// say how many resets went missing rather than how many lines did.
+	type row struct {
+		text  string
+		reset bool
+	}
+
+	now := time.Now()
+	rows := make([]row, 0, len(v.results)*2)
+	for i, r := range v.results {
+		name := bold(r.Account.Name)
+		if i == v.sel {
+			name = cyan(bold(r.Account.Name))
+		}
+		head := "   " + padStyled(name, r.Account.Name, accountNameCell)
+		switch {
+		case r.BankedErr != "":
+			rows = append(rows, row{text: head + yellow("unavailable") + " · " + dim(r.BankedErr)})
+		case !r.BankedLoaded:
+			rows = append(rows, row{text: head + dim("not loaded")})
+		default:
+			resets := bankedAvailable(r.BankedResets, now)
+			if len(resets) == 0 {
+				rows = append(rows, row{text: head + dim("none")})
+				break
+			}
+			rows = append(rows, row{text: head + dim(bankedCount(resets))})
+			for _, reset := range resets {
+				rows = append(rows, row{text: "     " + bankedDetailRow(reset, now), reset: true})
+			}
+		}
+	}
+
+	// An overflowing listing is cut with a note rather than losing its tail off
+	// the bottom of the terminal. The note is the last line the listing gives
+	// up: a screen cut down to nothing reads as accounts with no banked resets
+	// at all, which is the one thing this screen must not say.
+	fit, spacing := overlayFit(len(rows), v.size.rows)
+	if fit < len(rows) {
+		kept := max(fit-1, 0)
+		hidden := 0
+		for _, r := range rows[kept:] {
+			if r.reset {
+				hidden++
+			}
+		}
+		note := "   … see cx status for the rest"
+		if hidden > 0 {
+			note = fmt.Sprintf("   … %d more resets · see cx status", hidden)
+		}
+		rows = rows[:kept:kept]
+		// A budget of no rows has no room for the note about them either.
+		if fit > 0 {
+			rows = append(rows, row{text: dim(note)})
+		}
+	}
+
+	texts := make([]string, len(rows))
+	for i, r := range rows {
+		texts[i] = r.text
+	}
+	return overlayFrame(" "+bold("cx")+"  banked resets", texts, v.size, spacing)
 }
 
 // Account rows are laid out in fixed cells so the plan and email columns line

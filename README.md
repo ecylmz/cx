@@ -75,6 +75,16 @@ cx verifies the email that device auth actually returned and refuses to save the
 
 Opening the dashboard starts any rolling quota window that hasn't started yet, by sending one minimal Codex request per account. This spends a handful of tokens so your 5-hour and weekly reset countdowns stay active. Accounts with no quota left are shown as `window not started · usage limit reached`. (`cx auto` never does this — it only reads.)
 
+### Banked resets
+
+Accounts with banked rate-limit resets get a third meter line. Its bar is a fixed 30-day axis — the life of a banked reset — with a tick at each week, and every reset sits at the date it expires:
+
+```
+banked  ─────┼●───┼────┼────┼─       1 left   next in 8d 23h
+```
+
+The scale is the same on every account, so the lines can be read against each other. A pip turns yellow inside a week of expiring and red inside a day; a cell holding more than one reset is drawn `◉`. A reset the backend gives no expiry date for cannot be placed on the axis, so the count says so instead — `2 left · 1?` is two banked resets, one of them undated. Press `b` in the dashboard for the exact dates of every account, or run `cx status`, which always lists them in full.
+
 ## Build from source
 
 ```sh

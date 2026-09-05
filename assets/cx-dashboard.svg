@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="912" height="464" viewBox="0 0 912 464" xmlns="http://www.w3.org/2000/svg">
+<svg width="912" height="445" viewBox="0 0 912 445" xmlns="http://www.w3.org/2000/svg">
 <defs>
   <clipPath id="terminalCardClip">
-    <rect x="0" y="0" width="856" height="408" rx="14"/>
+    <rect x="0" y="0" width="856" height="389" rx="14"/>
   </clipPath>
 </defs>
-<rect width="912" height="464" rx="20" fill="#1c2128"/>
-<rect x="32" y="36" width="856" height="408" rx="14" fill="#000000" opacity="0.24"/>
-<rect x="28" y="28" width="856" height="408" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+<rect width="912" height="445" rx="20" fill="#1c2128"/>
+<rect x="32" y="36" width="856" height="389" rx="14" fill="#000000" opacity="0.24"/>
+<rect x="28" y="28" width="856" height="389" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
 <g transform="translate(28 28)" clip-path="url(#terminalCardClip)">
   <line x1="0" y1="34" x2="856" y2="34" stroke="#30363d" stroke-width="1"/>
   <circle cx="13.5" cy="17" r="5.5" fill="#FF5A54"/>
@@ -23,14 +23,13 @@
 <text x="20.00" y="169.40" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve" fill="#8b949e">○</tspan><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" font-weight="600" fill="#58a6ff">work</tspan><tspan xml:space="preserve">               pro        </tspan><tspan xml:space="preserve" fill="#8b949e">work@example.com</tspan></text>
 <text x="20.00" y="188.60" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve"> 5 hour  ██████████████████████</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#3fb950">100.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">not started · starts with Codex use</tspan></text>
 <text x="20.00" y="207.80" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve"> weekly  █████████████</tspan><tspan xml:space="preserve" fill="#8b949e">░░░░░░░░░</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#3fb950"> 61.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">resets 08.09.2026 18:39 · in 4d 2h</tspan></text>
-<text x="20.00" y="227.00" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve"> banked resets  1</tspan></text>
-<text x="20.00" y="246.20" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve">   weekly reset · </tspan><tspan xml:space="preserve" fill="#8b949e">expires 13.09.2026 15:39 · in 8d 23h</tspan></text>
-<text x="20.00" y="265.40" xml:space="preserve"></text>
-<text x="20.00" y="284.60" xml:space="preserve"><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#8b949e">○</tspan><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" font-weight="600">backup</tspan><tspan xml:space="preserve">             plus       </tspan><tspan xml:space="preserve" fill="#8b949e">backup@example.com</tspan></text>
-<text x="20.00" y="303.80" xml:space="preserve"><tspan xml:space="preserve">   5 hour  █</tspan><tspan xml:space="preserve" fill="#8b949e">░░░░░░░░░░░░░░░░░░░░░</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#f85149">  6.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">resets 04.09.2026 16:20 · in 40m</tspan></text>
-<text x="20.00" y="323.00" xml:space="preserve"><tspan xml:space="preserve">   weekly  ████</tspan><tspan xml:space="preserve" fill="#8b949e">░░░░░░░░░░░░░░░░░░</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#f85149"> 17.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">resets 05.09.2026 12:19 · in 20h 39m</tspan></text>
-<text x="20.00" y="342.20" xml:space="preserve"></text>
-<text x="20.00" y="361.40" xml:space="preserve"><tspan xml:space="preserve" fill="#8b949e"> ↑/↓ or j/k select   enter switch   r refresh   ? keys   q quit</tspan></text>
+<text x="20.00" y="227.00" xml:space="preserve"><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" fill="#58a6ff">▌</tspan><tspan xml:space="preserve"> banked  </tspan><tspan xml:space="preserve" fill="#8b949e">─────┼</tspan><tspan xml:space="preserve">●</tspan><tspan xml:space="preserve" fill="#8b949e">───┼────┼────┼─</tspan><tspan xml:space="preserve">       1 left   </tspan><tspan xml:space="preserve" fill="#8b949e">next in 8d 23h</tspan></text>
+<text x="20.00" y="246.20" xml:space="preserve"></text>
+<text x="20.00" y="265.40" xml:space="preserve"><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#8b949e">○</tspan><tspan xml:space="preserve"> </tspan><tspan xml:space="preserve" font-weight="600">backup</tspan><tspan xml:space="preserve">             plus       </tspan><tspan xml:space="preserve" fill="#8b949e">backup@example.com</tspan></text>
+<text x="20.00" y="284.60" xml:space="preserve"><tspan xml:space="preserve">   5 hour  █</tspan><tspan xml:space="preserve" fill="#8b949e">░░░░░░░░░░░░░░░░░░░░░</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#f85149">  6.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">resets 04.09.2026 16:20 · in 40m</tspan></text>
+<text x="20.00" y="303.80" xml:space="preserve"><tspan xml:space="preserve">   weekly  ████</tspan><tspan xml:space="preserve" fill="#8b949e">░░░░░░░░░░░░░░░░░░</tspan><tspan xml:space="preserve">  </tspan><tspan xml:space="preserve" fill="#f85149"> 17.0% left</tspan><tspan xml:space="preserve">   </tspan><tspan xml:space="preserve" fill="#8b949e">resets 05.09.2026 12:19 · in 20h 39m</tspan></text>
+<text x="20.00" y="323.00" xml:space="preserve"></text>
+<text x="20.00" y="342.20" xml:space="preserve"><tspan xml:space="preserve" fill="#8b949e"> ↑/↓ or j/k select   enter switch   r refresh   b banked   ? keys   q quit</tspan></text>
 </g>
 </g>
 </svg>
