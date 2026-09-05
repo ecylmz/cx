@@ -18,21 +18,25 @@ on:
 permissions:
   contents: write
 
+# One release at a time, whichever entry point started it. The group used to
+# include the sha and the event, so a tag push and a VERSION push for the same
+# version raced each other to create it.
 concurrency:
-  group: release-${{ github.event_name }}-${{ github.sha }}-${{ inputs.version || github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # cx has no dependencies, so there is no go.sum to key a cache on.
+          cache: false
 
       - name: Resolve version
         id: version
@@ -98,9 +102,20 @@ jobs:
               exit 0
             fi
           fi
+          # A re-run, or a second entry point for the same version, has to be able
+          # to reach the steps below rather than dying here. That is how a release
+          # whose tap update failed gets repaired. Re-releasing a version over a
+          # different commit is still refused.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG already exists" >&2
-            exit 1
+            at="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha' 2>/dev/null || echo unknown)"
+            if [[ "$at" != "$GITHUB_SHA" ]]; then
+              echo "release $TAG exists at $at, not at this commit $GITHUB_SHA" >&2
+              echo "bump VERSION rather than re-releasing a published version" >&2
+              exit 1
+            fi
+            echo "release $TAG is already published for this commit"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           args=(
             "$TAG"
@@ -120,21 +135,69 @@ jobs:
 
       - name: Update Homebrew tap
         if: steps.publish.outputs.released == 'true'
+        timeout-minutes: 10
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           TAP_REPO: ecylmz/homebrew-tap
+          TAP_WORKFLOW: update-formula.yml
         run: |
           set -euo pipefail
           if [[ -z "${GH_TOKEN:-}" ]]; then
             echo "TAP_DISPATCH_TOKEN is unset; cannot update the tap" >&2
             exit 1
           fi
-          gh workflow run update-formula.yml \
+
+          # A few seconds of slack so the run this dispatch starts cannot sort
+          # just before the mark we are looking for it after.
+          since="$(date -u -d '-10 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run "$TAP_WORKFLOW" \
             --repo "$TAP_REPO" \
             --field formula=cx \
             --field tag="$TAG" \
             --field repository="$GITHUB_REPOSITORY"
           echo "dispatched $TAP_REPO update for $TAG"
-          echo "https://github.com/$TAP_REPO/actions/workflows/update-formula.yml"
+
+          # gh workflow run reports only that the dispatch was accepted, so the
+          # run it starts has to be followed to its conclusion. Losing sight of
+          # it is a warning — the release itself is already good — but watching
+          # it fail is a failure.
+          find_run() {
+            gh run list --repo "$TAP_REPO" --workflow "$TAP_WORKFLOW" \
+              --event workflow_dispatch --limit 20 --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\")] | (max_by(.createdAt) // {}) | .databaseId // empty"
+          }
+          run_id=""
+          for _ in $(seq 1 12); do
+            if ! run_id="$(find_run 2>/dev/null)"; then
+              echo "::warning::cannot read $TAP_REPO runs; check the tap update by hand"
+              exit 0
+            fi
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+          if [[ -z "$run_id" ]]; then
+            echo "::warning::dispatched the tap update but its run never appeared; check $TAP_REPO"
+            exit 0
+          fi
+
+          url="https://github.com/$TAP_REPO/actions/runs/$run_id"
+          for _ in $(seq 1 60); do
+            if ! state="$(gh run view "$run_id" --repo "$TAP_REPO" --json status,conclusion \
+              --jq '"\(.status) \(.conclusion // "")"' 2>/dev/null)"; then
+              echo "::warning::lost sight of the tap run · $url"
+              exit 0
+            fi
+            read -r status conclusion <<<"$state"
+            if [[ "$status" == "completed" ]]; then
+              if [[ "$conclusion" == "success" ]]; then
+                echo "tap updated for $TAG · $url"
+                exit 0
+              fi
+              echo "tap update $conclusion · $url" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::warning::tap update had not finished after 5 minutes · $url"
