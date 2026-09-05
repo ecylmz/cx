@@ -28,8 +28,9 @@ func doctor(p paths) error {
 	if os.Getenv("CX_CODEX_SHELL_INTEGRATION") == "1" {
 		fmt.Printf("%s Codex shell integration: active\n", green("✓"))
 	} else {
-		fmt.Printf("%s Codex shell integration: inactive · run: eval \"$(cx shell-init)\"\n", yellow("!"))
-		ok = false
+		// Optional: it only guards against a running app-server daemon serving
+		// a stale account, so its absence is not a problem to report.
+		fmt.Printf("%s Codex shell integration: off (optional) · eval \"$(cx shell-init)\"\n", dim("·"))
 	}
 	as, err := listAccounts(p)
 	if err != nil {

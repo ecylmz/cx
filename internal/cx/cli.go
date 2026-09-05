@@ -319,13 +319,14 @@ Usage:
   cx rename OLD NEW                  rename an account
   cx remove|rm NAME                  remove an account and its credential
   cx doctor                          check codex, credential store, and accounts
-  cx shell-init                      print the shell wrapper for Codex auth
+  cx shell-init                      print the optional Codex shell wrapper
   cx update [--force]                install the latest GitHub release
   cx version                         print the cx version
 
 Notes:
-  Add 'eval "$(cx shell-init)"' to your shell startup file so a bare 'codex'
-  always uses the account cx selected instead of a stale app-server session.
+  'cx shell-init' prints an optional shell wrapper. Add it to your startup file
+  only if a bare 'codex' keeps serving the previous account after 'cx use',
+  which happens when it reattaches to a running app-server daemon.
 
   Use --expect EMAIL with 'cx add' or 'cx relogin' to reject a device-auth
   login to the wrong ChatGPT account before its credential is saved.

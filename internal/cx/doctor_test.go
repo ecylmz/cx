@@ -34,6 +34,16 @@ func TestDoctorHealthyAndMissingCodex(t *testing.T) {
 		}
 	}
 
+	t.Setenv("CX_CODEX_SHELL_INTEGRATION", "")
+	out = captureStdout(t, func() {
+		if err := doctor(p); err != nil {
+			t.Fatalf("shell integration is optional, doctor should still pass: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Codex shell integration: off (optional)") {
+		t.Fatalf("doctor output missing optional integration line:\n%s", out)
+	}
+
 	t.Setenv("PATH", t.TempDir())
 	if err := doctor(p); err == nil {
 		t.Fatal("expected doctor failure without codex")

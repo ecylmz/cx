@@ -128,37 +128,6 @@ configure_omarchy_cx_alias() {
   printf 'configured Omarchy cx alias override in %s\n' "$bashrc"
 }
 
-configure_codex_shell_integration() {
-  shell_name=$(basename "${SHELL:-}")
-  case "$shell_name" in
-    zsh) rc="$HOME/.zshrc" ;;
-    bash) rc="$HOME/.bashrc" ;;
-    *)
-      printf 'cx install: note: add eval "$(cx shell-init)" to your shell startup file\n'
-      return 0
-      ;;
-  esac
-
-  marker='# >>> cx Codex integration >>>'
-  end_marker='# <<< cx Codex integration <<<'
-  if [ -f "$rc" ] && grep -Fq "$marker" "$rc"; then
-    return 0
-  fi
-  if ! touch "$rc" 2>/dev/null; then
-    printf 'cx install: warning: could not update %s; run eval "$(cx shell-init)" manually\n' "$rc" >&2
-    return 0
-  fi
-
-  {
-    printf '\n%s\n' "$marker"
-    printf 'eval "$("%s/cx" shell-init)"\n' "$DEST_DIR"
-    printf '%s\n' "$end_marker"
-  } >> "$rc"
-
-  printf 'configured Codex shell integration in %s\n' "$rc"
-  printf 'restart your shell or run: eval "$(%s/cx shell-init)"\n' "$DEST_DIR"
-}
-
 bootstrap_first_account() {
   # Import an already-authorized Codex login as the first managed account
   # ("primary"). On a system without a Codex login this prints a hint and adds
@@ -180,7 +149,6 @@ else
 fi
 
 configure_omarchy_cx_alias
-configure_codex_shell_integration
 
 printf 'installed %s\n' "$DEST_DIR/cx"
 "$DEST_DIR/cx" version

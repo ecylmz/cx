@@ -14,13 +14,25 @@ Requires the Codex CLI.
 curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
 ```
 
-This installs `cx` to `~/.local/bin`, imports your existing Codex login as an account named `primary` (if you have one), and adds a small shell integration for bash/zsh.
+This installs `cx` to `~/.local/bin` and imports your existing Codex login as an account named `primary` (if you have one). It leaves your shell startup files alone, with one exception: Omarchy reserves `cx` for Claude Code, so on an Omarchy machine the installer appends a small block to `~/.bashrc` that drops that alias — and says so when it does.
 
-The shell integration matters: without it, a bare `codex` launch can reattach to a local app-server still holding the previously selected account. Add this line to `~/.zshrc` or `~/.bashrc` if the installer didn't:
+### Shell integration (optional)
+
+Recent Codex versions can keep a local app-server alive between sessions. While one is running, a bare `codex` may reattach to it and keep serving the account that was active when it started — so a switch you just made with `cx use` looks like it did nothing.
+
+If you see that, add this to `~/.zshrc` or `~/.bashrc`:
 
 ```sh
 eval "$(cx shell-init)"
 ```
+
+It defines a small `codex` shell function that passes one config override, which turns that reuse off so every new session reads the account cx selected. You can also pass the override by hand on the one run where it matters, instead of keeping a wrapper around:
+
+```sh
+codex -c 'cli_auth_credentials_store="file"'
+```
+
+Most setups never hit the stale-session case, so cx does not install this for you and `cx doctor` does not complain when it is missing. Nothing else in cx depends on it — every switch already writes the credential store setting into `~/.codex/config.toml` and repoints `auth.json`.
 
 ## Use
 
@@ -40,7 +52,7 @@ cx list                     # list accounts, no network
 cx rename OLD NEW
 cx remove NAME
 cx relogin NAME             # refresh one account's credential
-cx doctor                   # verify files, symlink and shell integration
+cx doctor                   # verify files, symlink and credentials
 cx update                   # install latest release
 cx version
 ```
