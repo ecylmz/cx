@@ -1,4 +1,4 @@
-.PHONY: test build dist clean
+.PHONY: test build dist assets clean
 
 VERSION ?= dev
 LDFLAGS := -s -w -X github.com/ecylmz/cx/internal/cx.Version=$(VERSION)
@@ -17,6 +17,10 @@ dist:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/cx-linux-amd64 ./cmd/cx
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/cx-linux-arm64 ./cmd/cx
 	(cd dist && sha256sum cx-* > SHA256SUMS 2>/dev/null || shasum -a 256 cx-* > SHA256SUMS)
+
+# The README picture is drawn, not captured: see tools/dashboardsvg.
+assets:
+	go run ./tools/dashboardsvg > assets/cx-dashboard.svg
 
 clean:
 	rm -f cx dist/cx-*
