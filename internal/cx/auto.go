@@ -57,7 +57,7 @@ func handleAuto(p paths) error {
 }
 
 func fetchAutoUsage(p paths, account Account) UsageResult {
-	fiveHour, weekly, err := fetchUsagePair(p, account)
+	fiveHour, weekly, err := fetchUsagePair(p, &account)
 	result := UsageResult{Account: account, Usage: weekly, FiveHour: fiveHour}
 	if err != nil {
 		result.Err = err.Error()
@@ -125,13 +125,23 @@ func autoQuotaRemaining(result UsageResult) (weekly, fiveHour float64, err error
 	if result.Err != "" {
 		return 0, 0, errors.New(result.Err)
 	}
-	if !result.Usage.Fresh || result.Usage.WindowMinutes <= 0 {
-		return 0, 0, errors.New("weekly quota is unavailable")
+	weekly, fiveHour = 100, 100
+	if result.Usage == (WeeklyUsage{}) && result.FiveHour == nil {
+		return 0, 0, errors.New("no quota windows available")
 	}
-	if result.FiveHour == nil || !result.FiveHour.Fresh || result.FiveHour.WindowMinutes <= 0 {
-		return 0, 0, errors.New("5-hour quota is unavailable")
+	if result.Usage != (WeeklyUsage{}) {
+		if !result.Usage.Fresh || result.Usage.WindowMinutes <= 0 {
+			return 0, 0, errors.New("weekly quota is unavailable")
+		}
+		weekly = clamp(100-result.Usage.UsedPercent, 0, 100)
 	}
-	return clamp(100-result.Usage.UsedPercent, 0, 100), clamp(100-result.FiveHour.UsedPercent, 0, 100), nil
+	if result.FiveHour != nil {
+		if !result.FiveHour.Fresh || result.FiveHour.WindowMinutes <= 0 {
+			return 0, 0, errors.New("5-hour quota is unavailable")
+		}
+		fiveHour = clamp(100-result.FiveHour.UsedPercent, 0, 100)
+	}
+	return weekly, fiveHour, nil
 }
 
 func accountBefore(a, b Account) bool {

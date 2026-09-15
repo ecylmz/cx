@@ -21,6 +21,7 @@ var (
 )
 
 type directUsagePayload struct {
+	PlanType             string                      `json:"plan_type"`
 	RateLimit            *directRateLimit            `json:"rate_limit"`
 	AdditionalRateLimits []directAdditionalRateLimit `json:"additional_rate_limits"`
 }
@@ -41,7 +42,7 @@ type directRateWindow struct {
 }
 
 func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
-	_, weekly, err := fetchUsagePairDirect(p, a)
+	_, weekly, err := fetchUsagePairDirect(p, &a)
 	return weekly, err
 }
 
@@ -91,8 +92,8 @@ func backendGet(p paths, a Account, endpoint, label string) ([]byte, error) {
 // httpSuccess reports whether a status code is in the 2xx range.
 func httpSuccess(status int) bool { return status >= 200 && status < 300 }
 
-func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
-	body, err := backendGet(p, a, directUsageEndpoint, "usage")
+func fetchUsagePairDirect(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
+	body, err := backendGet(p, *a, directUsageEndpoint, "usage")
 	if err != nil {
 		return nil, WeeklyUsage{}, err
 	}
@@ -100,6 +101,9 @@ func fetchUsagePairDirect(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error)
 	var payload directUsagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, WeeklyUsage{}, fmt.Errorf("decode usage response: %w", err)
+	}
+	if err := rememberAccountPlan(p, a, payload.PlanType); err != nil {
+		return nil, WeeklyUsage{}, err
 	}
 	fiveHourWindow, weeklyWindow, err := selectDirectCodexWindows(payload)
 	if err != nil {

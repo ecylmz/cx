@@ -89,13 +89,13 @@ func TestSelectAutoAccount(t *testing.T) {
 			wantErr:  "quota unavailable for first: offline",
 		},
 		{
-			name: "reject missing quota window",
+			name: "accept weekly-only quota",
 			results: []UsageResult{
 				autoResult(active, 40, 0),
 				{Account: first, Usage: WeeklyUsage{UsedPercent: 80, WindowMinutes: 10080, Fresh: true}},
 			},
 			activeID: active.ID,
-			wantErr:  "quota unavailable for first: 5-hour quota is unavailable",
+			want:     first.ID,
 		},
 		{
 			name:     "reject missing active account",
@@ -164,6 +164,10 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 		usageCalls.Add(1)
 		q := quotas[r.Header.Get("ChatGPT-Account-Id")]
 		now := time.Now().Unix()
+		if q.fiveHour < 0 {
+			_, _ = fmt.Fprintf(w, `{"plan_type":"free","rate_limit":{"primary_window":{"used_percent":%g,"limit_window_seconds":604800,"reset_at":%d}}}`, q.weekly, now+604800)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `{"rate_limit":{"primary_window":{"used_percent":%g,"limit_window_seconds":18000,"reset_at":%d},"secondary_window":{"used_percent":%g,"limit_window_seconds":604800,"reset_at":%d}}}`, q.fiveHour, now+18000, q.weekly, now+604800)
 	})
 	mux.HandleFunc("/reset-credits", func(w http.ResponseWriter, _ *http.Request) {
@@ -216,5 +220,39 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	}
 	if usageCalls.Load() != 3 || resetCalls.Load() != 0 {
 		t.Fatalf("usage calls=%d reset calls=%d", usageCalls.Load(), resetCalls.Load())
+	}
+
+	quotas["acct-b"] = usage{weekly: 95, fiveHour: -1}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "keeping backup") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	quotas["acct-b"] = usage{weekly: 100, fiveHour: -1}
+	quotas["acct-a"] = usage{weekly: 50, fiveHour: 50}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "switched to primary") {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+func TestAutoQuotaRemainingSingleWindows(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		result       UsageResult
+		weekly, five float64
+		fail         bool
+	}{
+		{name: "weekly only", result: UsageResult{Usage: WeeklyUsage{Fresh: true, WindowMinutes: 10080, UsedPercent: 35}}, weekly: 65, five: 100},
+		{name: "five hour only", result: UsageResult{FiveHour: &WeeklyUsage{Fresh: true, WindowMinutes: 300, UsedPercent: 100}}, weekly: 100, five: 0},
+		{name: "no windows", fail: true},
+		{name: "stale weekly", result: UsageResult{Usage: WeeklyUsage{WindowMinutes: 10080}}, fail: true},
+		{name: "invalid five hour", result: UsageResult{FiveHour: &WeeklyUsage{Fresh: true}}, fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			weekly, five, err := autoQuotaRemaining(tc.result)
+			if (err != nil) != tc.fail || (!tc.fail && (weekly != tc.weekly || five != tc.five)) {
+				t.Fatalf("weekly=%v five=%v err=%v", weekly, five, err)
+			}
+		})
 	}
 }

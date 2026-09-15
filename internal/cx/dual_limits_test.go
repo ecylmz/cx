@@ -29,7 +29,7 @@ func TestFetchUsagePairDirectReturnsFiveHourAndWeekly(t *testing.T) {
 		directUsageEndpoint, directUsageHTTPClient = oldEndpoint, oldClient
 	}()
 
-	fiveHour, weekly, err := fetchUsagePairDirect(p, a)
+	fiveHour, weekly, err := fetchUsagePairDirect(p, &a)
 	if err != nil {
 		t.Fatal(err)
 	}

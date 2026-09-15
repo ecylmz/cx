@@ -67,7 +67,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			}
 
 			usageSem <- struct{}{}
-			fiveHour, weekly, err := fetchUsagePair(p, r.Account)
+			fiveHour, weekly, err := fetchUsagePair(p, &r.Account)
 			<-usageSem
 			if err != nil {
 				r.PrimeErr = singleLine("window-start turn succeeded, but quota refresh failed: " + err.Error())

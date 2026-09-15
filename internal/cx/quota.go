@@ -51,6 +51,7 @@ type rateWindow struct {
 	ResetsAt           *int64  `json:"resetsAt"`
 }
 type rateSnapshot struct {
+	PlanType  string      `json:"planType"`
 	Primary   *rateWindow `json:"primary"`
 	Secondary *rateWindow `json:"secondary"`
 }
@@ -75,20 +76,21 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 			var usageErr error
 			var banked []BankedReset
 			var bankedErr error
+			bankedAccount := a
 			var reads sync.WaitGroup
 			reads.Add(2)
 			go func() {
 				defer reads.Done()
-				fiveHour, weekly, usageErr = fetchUsagePair(p, a)
+				fiveHour, weekly, usageErr = fetchUsagePair(p, &a)
 			}()
 			go func() {
 				defer reads.Done()
-				banked, bankedErr = fetchBankedResetsDirect(p, a)
+				banked, bankedErr = fetchBankedResetsDirect(p, bankedAccount)
 			}()
 			reads.Wait()
 
 			if bankedErr != nil && usageErr == nil {
-				if retry, err := fetchBankedResetsDirect(p, a); err == nil {
+				if retry, err := fetchBankedResetsDirect(p, bankedAccount); err == nil {
 					banked = retry
 					bankedErr = nil
 				} else {
@@ -140,7 +142,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 				results[i].PrimeErr, results[i].PrimeSkipped = classifyPrimeFailure(err)
 				return
 			}
-			fiveHour, weekly, err := fetchUsagePair(p, results[i].Account)
+			fiveHour, weekly, err := fetchUsagePair(p, &results[i].Account)
 			if err != nil {
 				results[i].PrimeErr = singleLine("window-start turn succeeded, but quota refresh failed: " + err.Error())
 				return
@@ -300,11 +302,11 @@ func rememberFiveHourReset(p paths, a Account, resetAt int64) (Account, error) {
 }
 
 func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
-	_, weekly, err := fetchUsagePair(p, a)
+	_, weekly, err := fetchUsagePair(p, &a)
 	return weekly, err
 }
 
-func fetchUsagePair(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
+func fetchUsagePair(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
 	fiveHour, weekly, directErr := fetchUsagePairDirect(p, a)
 	if directErr == nil {
 		return fiveHour, weekly, nil
@@ -316,7 +318,7 @@ func fetchUsagePair(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
 	return nil, WeeklyUsage{}, fmt.Errorf("direct usage read: %v; app-server fallback: %w", directErr, appErr)
 }
 
-func fetchUsagePairViaAppServer(p paths, a Account) (*WeeklyUsage, WeeklyUsage, error) {
+func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return nil, WeeklyUsage{}, errors.New("codex executable not found")
 	}
@@ -370,6 +372,13 @@ func fetchUsagePairViaAppServer(p paths, a Account) (*WeeklyUsage, WeeklyUsage, 
 		return nil, WeeklyUsage{}, fmt.Errorf("decode rate limits: %w", err)
 	}
 
+	snapshot := rr.RateLimits
+	if codex, ok := rr.RateLimitsByLimitID["codex"]; ok {
+		snapshot = codex
+	}
+	if err := rememberAccountPlan(p, a, snapshot.PlanType); err != nil {
+		return nil, WeeklyUsage{}, err
+	}
 	fiveHourWindow, weeklyWindow, err := selectCodexRateWindows(rr)
 	if err != nil {
 		return nil, WeeklyUsage{}, err

@@ -148,6 +148,7 @@ func runDashboard(p paths) error {
 					applyCachedUsageFallbackResult(cache, &r)
 				}
 				v.results[update.Index] = r
+				v.accounts[update.Index] = r.Account
 				v.footer = refreshFooter(completed, len(accounts))
 				layout = drawDashboardFrame(v)
 			case <-resize:

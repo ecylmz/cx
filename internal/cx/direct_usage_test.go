@@ -8,7 +8,7 @@ import (
 
 func TestFetchUsageDirectUsesCodexBackendContract(t *testing.T) {
 	p := makeTestPaths(t)
-	a := Account{ID: "a", Name: "primary", AccountID: "acct"}
+	a := Account{ID: "a", Name: "primary", AccountID: "acct", Plan: "plus"}
 	writeTestAccount(t, p, a)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +23,7 @@ func TestFetchUsageDirectUsesCodexBackendContract(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"plan_type":"plus",
+			"plan_type":"free",
 			"rate_limit":{
 				"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_at":100},
 				"secondary_window":{"used_percent":37,"limit_window_seconds":604800,"reset_at":200}
@@ -38,9 +38,16 @@ func TestFetchUsageDirectUsesCodexBackendContract(t *testing.T) {
 		directUsageEndpoint, directUsageHTTPClient = oldEndpoint, oldClient
 	}()
 
-	u, err := fetchUsageDirect(p, a)
+	five, u, err := fetchUsagePair(p, &a)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if a.Plan != "free" || five == nil {
+		t.Fatalf("account=%+v five=%+v", a, five)
+	}
+	var saved Account
+	if err := readJSON(p.accountMeta(a.ID), &saved); err != nil || saved.Plan != "free" {
+		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 	if u.UsedPercent != 37 || u.WindowMinutes != 10080 || u.ResetsAt != 200 || !u.Fresh {
 		t.Fatalf("usage=%+v", u)

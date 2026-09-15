@@ -69,7 +69,7 @@ cx verifies the email that device auth actually returned and refuses to save the
 
 ### Automatic selection
 
-`cx auto` keeps the active account as long as it has both 5-hour and weekly quota left. Once either runs out, it switches to the usable account with the *least* weekly quota remaining — spending the nearly-empty accounts first and keeping the fresh ones in reserve. It exits with status 1 without switching if every account is exhausted.
+`cx auto` keeps the active account as long as it has quota left in every window reported by the server (5-hour, weekly, or both). Once a reported window runs out, it switches to the usable account with the *least* weekly quota remaining — spending the nearly-empty accounts first and keeping the fresh ones in reserve. It exits with status 1 without switching if every account is exhausted.
 
 ### Quota windows
 

@@ -249,3 +249,17 @@ func removeAccount(p paths, selector string) error {
 	}
 	return os.RemoveAll(p.accountDir(a.ID))
 }
+
+func rememberAccountPlan(p paths, a *Account, plan string) error {
+	if plan == "" || plan == a.Plan {
+		return nil
+	}
+	updated := *a
+	updated.Plan = plan
+	updated.UpdatedAt = time.Now()
+	if err := writeJSON(p.accountMeta(a.ID), updated); err != nil {
+		return fmt.Errorf("save account plan: %w", err)
+	}
+	*a = updated
+	return nil
+}
