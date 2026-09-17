@@ -71,6 +71,8 @@ cx verifies the email that device auth actually returned and refuses to save the
 
 `cx auto` keeps the active account as long as it has quota left in every window reported by the server (5-hour, weekly, or both). Once a reported window runs out, it switches to the usable account with the *least* weekly quota remaining — spending the nearly-empty accounts first and keeping the fresh ones in reserve. It exits with status 1 without switching if every account is exhausted.
 
+A candidate whose quota cx cannot read — a stale credential, one slow response among the concurrent ones, an account the backend reports no Codex window for — is passed over rather than failing the whole selection, which is what it used to do. If passing them over leaves nothing usable, cx names each account it could not read instead of reporting an exhausted pool: only one of those two is fixed by waiting.
+
 ### Quota windows
 
 Opening the dashboard starts any rolling quota window that hasn't started yet, by sending one minimal Codex request per account. This spends a handful of tokens so your 5-hour and weekly reset countdowns stay active. Accounts with no quota left are shown as `window not started · usage limit reached`. (`cx auto` never does this — it only reads.)

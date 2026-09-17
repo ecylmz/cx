@@ -98,13 +98,20 @@ func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, e
 
 	best := -1
 	var bestWeekly, bestFiveHour float64
+	var unreadable []string
 	for i := range results {
 		if i == active {
 			continue
 		}
 		weekly, fiveHour, err := autoQuotaRemaining(results[i])
 		if err != nil {
-			return Account{}, false, fmt.Errorf("quota unavailable for %s: %w", results[i].Account.Name, err)
+			// A candidate cx cannot read is not a verdict on the ones it can.
+			// A stale token, one slow response among several concurrent ones, or
+			// an account the backend reports no Codex window for used to veto
+			// every usable account on the list — at the single moment that list
+			// matters, when the active account has just run out.
+			unreadable = append(unreadable, fmt.Sprintf("%s: %v", results[i].Account.Name, err))
+			continue
 		}
 		if weekly <= 0 || fiveHour <= 0 {
 			continue
@@ -116,6 +123,13 @@ func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, e
 		}
 	}
 	if best < 0 {
+		// Skipping an unreadable candidate must not make it disappear: with
+		// nothing usable left, why cx could not read it is the whole answer,
+		// and "exhausted" would send the operator to wait for a reset that is
+		// not what stands in the way.
+		if len(unreadable) > 0 {
+			return Account{}, false, fmt.Errorf("no usable account; quota unavailable for %s", strings.Join(unreadable, ", "))
+		}
 		return Account{}, false, errAllAccountsExhausted
 	}
 	return results[best].Account, false, nil

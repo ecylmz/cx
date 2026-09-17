@@ -79,14 +79,37 @@ func TestSelectAutoAccount(t *testing.T) {
 			exhausted: true,
 		},
 		{
-			name: "reject unavailable quota",
+			// One unreadable candidate must not veto a usable one.
+			name: "skip a candidate whose quota cannot be read",
 			results: []UsageResult{
 				autoResult(active, 40, 0),
 				{Account: first, Err: "offline"},
 				autoResult(second, 20, 30),
 			},
 			activeID: active.ID,
-			wantErr:  "quota unavailable for first: offline",
+			want:     second.ID,
+		},
+		{
+			name: "name the unreadable candidates when none is usable",
+			results: []UsageResult{
+				autoResult(active, 40, 0),
+				{Account: first, Err: "offline"},
+				{Account: second, Err: "usage endpoint returned no Codex rate-limit window"},
+			},
+			activeID: active.ID,
+			wantErr:  "no usable account; quota unavailable for first: offline, second: usage endpoint returned no Codex rate-limit window",
+		},
+		{
+			// An exhausted account and an unreadable one are different answers,
+			// and only one of them is fixed by waiting.
+			name: "prefer the unreadable reason over the exhausted verdict",
+			results: []UsageResult{
+				autoResult(active, 40, 0),
+				{Account: first, Err: "offline"},
+				autoResult(second, 0, 30),
+			},
+			activeID: active.ID,
+			wantErr:  "no usable account; quota unavailable for first: offline",
 		},
 		{
 			name: "accept weekly-only quota",
