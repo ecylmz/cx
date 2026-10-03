@@ -78,9 +78,11 @@ func Main() {
 		if len(args) > 2 {
 			fatal(errors.New("usage: cx shell-init [bash|zsh|fish]"))
 		}
-		shell := "bash"
+		var shell string
 		if len(args) == 2 {
 			shell = args[1]
+		} else {
+			shell = detectShell()
 		}
 		if err := printShellInit(shell); err != nil {
 			fatal(err)
@@ -330,12 +332,16 @@ Usage:
   cx version                         print the cx version
 
 Notes:
+  'cx shell-init' checks its parent process, then $SHELL, for bash, zsh, or fish.
+  If neither is recognized, it prints Bash/Zsh syntax. Pass a shell name to
+  select the output explicitly.
+
   Shell integration is optional. Add the matching line to your startup file
   only if a bare 'codex' keeps serving the previous account after 'cx use',
   which happens when it reattaches to a running app-server daemon.
 
   Bash/Zsh: eval "$(cx shell-init)"
-  Fish:     cx shell-init fish | source
+  Fish:     cx shell-init | source
 
   Use --expect EMAIL with 'cx add' or 'cx relogin' to reject a device-auth
   login to the wrong ChatGPT account before its credential is saved.

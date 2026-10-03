@@ -1,6 +1,28 @@
 package cx
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func detectShell() string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(os.Getppid()), "-o", "comm=").Output()
+	if err != nil {
+		out = nil
+	}
+	for _, candidate := range []string{string(out), os.Getenv("SHELL")} {
+		shell := strings.TrimPrefix(filepath.Base(strings.TrimSpace(candidate)), "-")
+		switch shell {
+		case "bash", "zsh", "fish":
+			return shell
+		}
+	}
+	return "bash"
+}
 
 // printShellInit emits a tiny interactive-shell wrapper for Codex. Modern Codex
 // TUI versions can reuse a long-lived local app-server whose in-memory account

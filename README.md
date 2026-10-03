@@ -29,8 +29,10 @@ eval "$(cx shell-init)"
 For Fish, add this to `~/.config/fish/config.fish`:
 
 ```fish
-cx shell-init fish | source
+cx shell-init | source
 ```
+
+When you omit the shell argument, `cx shell-init` checks the process that started it, then `$SHELL`. If neither identifies Bash, Zsh, or Fish, it uses Bash/Zsh syntax. Pass `bash`, `zsh`, or `fish` to select the output explicitly, for example `cx shell-init fish | source`.
 
 It defines a small `codex` shell function that passes one config override, which turns that reuse off so every new session reads the account cx selected. You can also pass the override by hand on the one run where it matters, instead of keeping a wrapper around:
 
