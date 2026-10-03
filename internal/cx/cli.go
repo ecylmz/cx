@@ -75,10 +75,16 @@ func Main() {
 	case "version", "--version":
 		fmt.Printf("cx %s\n", Version)
 	case "shell-init":
-		if len(args) != 1 {
-			fatal(errors.New("usage: cx shell-init"))
+		if len(args) > 2 {
+			fatal(errors.New("usage: cx shell-init [bash|zsh|fish]"))
 		}
-		printShellInit()
+		shell := "bash"
+		if len(args) == 2 {
+			shell = args[1]
+		}
+		if err := printShellInit(shell); err != nil {
+			fatal(err)
+		}
 	case "init":
 		if len(args) != 1 {
 			fatal(errors.New("usage: cx init"))
@@ -319,14 +325,17 @@ Usage:
   cx rename OLD NEW                  rename an account
   cx remove|rm NAME                  remove an account and its credential
   cx doctor                          check codex, credential store, and accounts
-  cx shell-init                      print the optional Codex shell wrapper
+  cx shell-init [bash|zsh|fish]       print the optional Codex shell wrapper
   cx update [--force]                install the latest GitHub release
   cx version                         print the cx version
 
 Notes:
-  'cx shell-init' prints an optional shell wrapper. Add it to your startup file
+  Shell integration is optional. Add the matching line to your startup file
   only if a bare 'codex' keeps serving the previous account after 'cx use',
   which happens when it reattaches to a running app-server daemon.
+
+  Bash/Zsh: eval "$(cx shell-init)"
+  Fish:     cx shell-init fish | source
 
   Use --expect EMAIL with 'cx add' or 'cx relogin' to reject a device-auth
   login to the wrong ChatGPT account before its credential is saved.

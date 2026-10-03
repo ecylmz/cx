@@ -30,7 +30,7 @@ func doctor(p paths) error {
 	} else {
 		// Optional: it only guards against a running app-server daemon serving
 		// a stale account, so its absence is not a problem to report.
-		fmt.Printf("%s Codex shell integration: off (optional) · eval \"$(cx shell-init)\"\n", dim("·"))
+		fmt.Printf("%s Codex shell integration: off (optional) · see 'cx help'\n", dim("·"))
 	}
 	as, err := listAccounts(p)
 	if err != nil {
