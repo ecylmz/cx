@@ -20,11 +20,19 @@ This installs `cx` to `~/.local/bin` and imports your existing Codex login as an
 
 Recent Codex versions can keep a local app-server alive between sessions. While one is running, a bare `codex` may reattach to it and keep serving the account that was active when it started — so a switch you just made with `cx use` looks like it did nothing.
 
-If you see that, add this to `~/.zshrc` or `~/.bashrc`:
+If you see that, add this to `~/.zshrc` or `~/.bashrc` for Zsh or Bash:
 
 ```sh
 eval "$(cx shell-init)"
 ```
+
+For Fish, add this to `~/.config/fish/config.fish`:
+
+```fish
+cx shell-init | source
+```
+
+When you omit the shell argument, `cx shell-init` checks the process that started it, then `$SHELL`. If neither identifies Bash, Zsh, or Fish, it uses Bash/Zsh syntax. Pass `bash`, `zsh`, or `fish` to select the output explicitly, for example `cx shell-init fish | source`.
 
 It defines a small `codex` shell function that passes one config override, which turns that reuse off so every new session reads the account cx selected. You can also pass the override by hand on the one run where it matters, instead of keeping a wrapper around:
 
