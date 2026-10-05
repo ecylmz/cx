@@ -165,6 +165,47 @@ func TestPrimeWeeklyWindowRetriesWhenCachedModelIsGone(t *testing.T) {
 	}
 }
 
+func TestPrimeWeeklyWindowSkipsRefusedModelStillInCatalog(t *testing.T) {
+	p := makeTestPaths(t)
+	a := Account{ID: "a", Name: "primary", AccountID: "acct"}
+	writeTestAccount(t, p, a)
+	writeModelsCache(t, filepath.Join(p.accountDir(a.ID), "models_cache.json"), "0.40.0",
+		`{"slug":"gpt-5.1-codex-mini","visibility":"list","priority":23,"supported_in_api":true}`)
+
+	var clientVersion string
+	var models []any
+	usePrimeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			clientVersion = r.URL.Query().Get("client_version")
+			_, _ = w.Write([]byte(`{"models":[` +
+				`{"slug":"gpt-5.1-codex-mini","visibility":"list","priority":23,"supported_in_api":true},` +
+				`{"slug":"gpt-retired","visibility":"list","priority":20,"supported_in_api":true},` +
+				`{"slug":"gpt-5.5","visibility":"list","priority":12,"supported_in_api":true}]}`))
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		models = append(models, body["model"])
+		if body["model"] != "gpt-5.5" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"detail":"The model is not supported when using Codex with a ChatGPT account."}`))
+			return
+		}
+		sseResponse(w, `{"type":"response.created"}`, `{"type":"response.completed"}`)
+	})
+
+	if err := primeWeeklyWindow(p, a); err != nil {
+		t.Fatal(err)
+	}
+	if clientVersion != defaultCodexClientVersion {
+		t.Fatalf("client_version=%q; a stale cache must not ask for an older catalog", clientVersion)
+	}
+	want := []any{"gpt-5.1-codex-mini", "gpt-retired", "gpt-5.5"}
+	if len(models) != len(want) || models[0] != want[0] || models[1] != want[1] || models[2] != want[2] {
+		t.Fatalf("models=%v; want %v", models, want)
+	}
+}
+
 func TestPrimeWeeklyWindowReportsExhaustedQuotaAsSkipped(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,6 +28,9 @@ const (
 	// defaultPrimeModel is the last resort when neither the local model cache
 	// nor the catalog endpoint answers.
 	defaultPrimeModel = "gpt-5.4-mini"
+	// maxPrimeModelRetries bounds how many other catalog models a window start
+	// tries after the backend refuses a model.
+	maxPrimeModelRetries = 3
 )
 
 var (
@@ -82,17 +87,56 @@ func primeWeeklyWindow(p paths, a Account) error {
 	}
 
 	err = startQuotaWindow(ctx, token, accountID, model)
-	var httpErr *primeHTTPError
-	if errors.As(err, &httpErr) && httpErr.modelRejected() {
-		// The cached catalog is stale. Ask the backend which models this
-		// account may use and retry once.
-		if fetched, ferr := fetchCodexModels(ctx, token, accountID, clientVersion); ferr == nil {
-			if alt := chooseCodexModel(fetched); alt != "" && alt != model {
-				err = startQuotaWindow(ctx, token, accountID, alt)
-			}
+	if !modelRejected(err) {
+		return err
+	}
+	// The cached catalog is stale. Ask the backend which models this account
+	// may use. An old client version can bring back an old catalog that still
+	// lists the refused slug, so ask as at least the version cx knows, and
+	// skip every slug the backend already refused.
+	fetched, ferr := fetchCodexModels(ctx, token, accountID, newerVersion(clientVersion, defaultCodexClientVersion))
+	if ferr != nil {
+		return err
+	}
+	refused := map[string]bool{model: true}
+	for range maxPrimeModelRetries {
+		alt := chooseCodexModel(slices.DeleteFunc(slices.Clone(fetched), func(m codexModel) bool { return refused[m.Slug] }))
+		if alt == "" {
+			break
+		}
+		refused[alt] = true
+		if err = startQuotaWindow(ctx, token, accountID, alt); !modelRejected(err) {
+			break
 		}
 	}
 	return err
+}
+
+func modelRejected(err error) bool {
+	var httpErr *primeHTTPError
+	return errors.As(err, &httpErr) && httpErr.modelRejected()
+}
+
+// newerVersion returns the higher of two dotted numeric versions, so a stale
+// local cache never asks the catalog for an older list than cx knows.
+func newerVersion(a, b string) string {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := range max(len(pa), len(pb)) {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			if x > y {
+				return a
+			}
+			return b
+		}
+	}
+	return a
 }
 
 // startQuotaWindow sends one minimal streaming turn and waits until the backend
