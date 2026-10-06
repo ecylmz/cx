@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +84,45 @@ func TestFetchAllUsageReadsUsageAndBankedResetsWithoutCodex(t *testing.T) {
 	}
 	if rs[0].Usage.UsedPercent != 10 || len(rs[0].BankedResets) != 1 || rs[0].BankedResets[0].ID != "credit-1" {
 		t.Fatalf("result=%+v", rs[0])
+	}
+}
+
+func TestFetchAllUsageNamesReloginWhenTheSignInExpired(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell helper")
+	}
+	p := makeTestPaths(t)
+	a := Account{ID: "a", Name: "primary", AccountID: "acct"}
+	writeTestAccount(t, p, a)
+
+	expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"Provided authentication token is expired. Please try signing in again.","code":"token_expired"}}`))
+	}))
+	defer expired.Close()
+	oldUsageEndpoint, oldCreditsEndpoint, oldClient := directUsageEndpoint, directResetCreditsEndpoint, directUsageHTTPClient
+	directUsageEndpoint, directResetCreditsEndpoint, directUsageHTTPClient = expired.URL, expired.URL, expired.Client()
+	defer func() {
+		directUsageEndpoint, directResetCreditsEndpoint, directUsageHTTPClient = oldUsageEndpoint, oldCreditsEndpoint, oldClient
+	}()
+
+	// Codex fails to refresh a reused refresh token and reports the 401 it got.
+	bin := t.TempDir()
+	script := `#!/bin/sh
+IFS= read -r init
+echo '{"id":1,"result":{}}'
+IFS= read -r initialized
+IFS= read -r request
+echo '{"id":2,"error":{"code":-32603,"message":"failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized"}}'
+`
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	r := fetchAllUsage(p, []Account{a})[0]
+	if !r.SignInExpired || r.Err != "sign-in expired · run cx relogin primary" || r.BankedErr != "sign-in expired" {
+		t.Fatalf("result=%+v", r)
 	}
 }
 

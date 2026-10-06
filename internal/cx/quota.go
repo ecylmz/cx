@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,6 +35,9 @@ type UsageResult struct {
 	BankedResets []BankedReset
 	BankedErr    string
 	BankedLoaded bool
+	// SignInExpired is set when the backend rejects the stored credential and
+	// Codex cannot refresh it. Err then names the fix instead of the raw reply.
+	SignInExpired bool
 }
 
 type rpcEnvelope struct {
@@ -110,6 +114,13 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 			}
 			if bankedErr != nil {
 				r.BankedErr = bankedErr.Error()
+			}
+			if errors.Is(usageErr, errSignInExpired) {
+				r.SignInExpired = true
+				r.Err = "sign-in expired · run cx relogin " + a.Name
+				if bankedErr != nil {
+					r.BankedErr = "sign-in expired"
+				}
 			}
 			out[i] = r
 		}()
@@ -315,8 +326,18 @@ func fetchUsagePair(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
 	if appErr == nil {
 		return fiveHour, weekly, nil
 	}
-	return nil, WeeklyUsage{}, fmt.Errorf("direct usage read: %v; app-server fallback: %w", directErr, appErr)
+	err := fmt.Errorf("direct usage read: %v; app-server fallback: %w", directErr, appErr)
+	// Codex refreshes an expired access token before it reads, so a 401 from
+	// both reads means the refresh token is dead too: only a new sign-in helps.
+	if strings.Contains(directErr.Error(), "HTTP 401") && strings.Contains(appErr.Error(), "401") {
+		return nil, WeeklyUsage{}, fmt.Errorf("%w: %w", errSignInExpired, err)
+	}
+	return nil, WeeklyUsage{}, err
 }
+
+// errSignInExpired marks a usage read the backend refused because the stored
+// credential no longer works, which `cx relogin` fixes.
+var errSignInExpired = errors.New("sign-in expired")
 
 func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
 	if _, err := exec.LookPath("codex"); err != nil {

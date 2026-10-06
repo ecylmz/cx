@@ -585,7 +585,11 @@ func accountBlock(v dashboardView, i int) []string {
 		}
 	} else if !r.Usage.FetchedAt.IsZero() {
 		meters()
-		lines = append(lines, indent+yellow("stale")+" · cached "+shortDuration(time.Since(r.Usage.FetchedAt))+" ago")
+		note := yellow("stale") + " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
+		if r.SignInExpired {
+			note += " · " + red(r.Err)
+		}
+		lines = append(lines, indent+note)
 	} else {
 		lines = append(lines, indent+red("unavailable")+" "+r.Err)
 		banked()
