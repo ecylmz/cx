@@ -456,17 +456,13 @@ func runAgent(p paths, args []string) error {
 		return errors.New("active account was not found. Run cx use NAME to select one")
 	}
 	account := accounts[i]
-	switch account.provider() {
-	case providerCodex:
-		return execAgent(exec.Command("codex", append([]string{"-c", `cli_auth_credentials_store="file"`}, args...)...))
-	case providerAgy:
-		if err := activateAccount(p, account, false); err != nil {
-			return err
-		}
-		return launchAgy(args)
-	default:
-		return fmt.Errorf("unknown provider %q", account.provider())
+	if err := activateAccount(p, account, false); err != nil {
+		return err
 	}
+	if account.provider() == providerAgy {
+		return launchAgy(args)
+	}
+	return execAgent(exec.Command("codex", append([]string{"-c", `cli_auth_credentials_store="file"`}, args...)...))
 }
 
 func execAgent(cmd *exec.Cmd) error {

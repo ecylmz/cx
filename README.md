@@ -40,7 +40,7 @@ The shell function disables app server reuse so each new session reads the accou
 codex -c 'cli_auth_credentials_store="file"'
 ```
 
-Each Codex account switch sets the file credential store in `~/.codex/config.toml` and links `auth.json` to the selected account.
+Each Codex account switch uses `$CODEX_HOME` or `~/.codex` if it is unset. cx sets the file credential store in `config.toml` and links `auth.json` to the selected account. `cx run` applies the selection in that directory before it starts Codex.
 
 ## Use
 

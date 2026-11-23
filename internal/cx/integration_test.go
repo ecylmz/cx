@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -62,6 +63,54 @@ func TestSwitchAccountCreatesManagedSymlink(t *testing.T) {
 	}
 	if _, err := os.Stat(p.sharedAuthPath() + ".cx-backup"); err != nil {
 		t.Fatalf("legacy backup missing: %v", err)
+	}
+}
+
+func TestRunUsesSelectedCodexAccountInAnotherHome(t *testing.T) {
+	if os.Getenv("CX_TEST_RUN_CODEX") == "1" {
+		os.Args = []string{"cx", "run"}
+		Main()
+		t.Fatal("cx run returned without launching Codex")
+	}
+	p := makeTestPaths(t)
+	a := Account{ID: "selected", Name: "work", AccountID: "selected-account"}
+	writeTestAccount(t, p, a)
+	if err := switchAccount(p, a); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexec /bin/cat \"$CODEX_HOME/auth.json\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", p.Home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(p.ConfigRoot))
+	t.Setenv("XDG_DATA_HOME", filepath.Dir(p.DataRoot))
+	t.Setenv("XDG_CACHE_HOME", filepath.Dir(p.CacheRoot))
+	for _, name := range []string{"fresh", "existing"} {
+		t.Run(name, func(t *testing.T) {
+			home := filepath.Join(p.Home, name)
+			previous := testAuthBytes(t, "previous-account")
+			if name == "existing" {
+				if err := atomicWrite(filepath.Join(home, "auth.json"), previous, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=^TestRunUsesSelectedCodexAccountInAnotherHome$")
+			cmd.Env = append(cmd.Environ(), "CX_TEST_RUN_CODEX=1", "CODEX_HOME="+home)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("cx run: %v\n%s", err, out)
+			}
+			if string(out) != string(testAuthBytes(t, a.AccountID)) {
+				t.Fatal("Codex did not receive the selected credential")
+			}
+			if name == "existing" {
+				if backup, err := os.ReadFile(filepath.Join(home, "auth.json.cx-backup")); err != nil || string(backup) != string(previous) {
+					t.Fatalf("the existing login must be backed up: %v", err)
+				}
+			}
+		})
 	}
 }
 
