@@ -11,7 +11,7 @@ import (
 var errAllAccountsExhausted = errors.New("all accounts are exhausted")
 
 func handleAuto(p paths) error {
-	accounts, err := listAccounts(p)
+	accounts, err := listAllAccounts(p)
 	if err != nil {
 		return err
 	}
@@ -23,24 +23,36 @@ func handleAuto(p paths) error {
 	if err != nil {
 		return err
 	}
-	active := slices.IndexFunc(accounts, func(a Account) bool { return a.ID == st.ActiveID })
+	activeID := st.defaultAccountID()
+	active := slices.IndexFunc(accounts, func(a Account) bool { return a.ID == activeID })
 	if active < 0 {
 		return errors.New("no active account; select one with: cx use NAME")
 	}
 
-	activeResult := fetchAutoUsage(p, accounts[active])
+	activeResult := fetchAccountQuota(p, accounts[active])
 	weekly, fiveHour, err := autoQuotaRemaining(activeResult)
-	if err != nil {
-		return fmt.Errorf("quota unavailable for %s: %w", activeResult.Account.Name, err)
-	}
-	if weekly > 0 && fiveHour > 0 {
+	if err == nil && weekly > 0 && fiveHour > 0 {
 		fmt.Printf("current account still has quota · keeping %s\n", activeResult.Account.Name)
 		return nil
 	}
 
-	candidates := slices.Concat(accounts[:active], accounts[active+1:])
-	results := append([]UsageResult{activeResult}, fetchAllAutoUsage(p, candidates)...)
-	account, _, err := selectAutoAccount(results, st.ActiveID)
+	var same, other []Account
+	for i, a := range accounts {
+		if i == active {
+			continue
+		}
+		if a.Provider == accounts[active].Provider {
+			same = append(same, a)
+		} else {
+			other = append(other, a)
+		}
+	}
+	results := append([]UsageResult{activeResult}, fetchAllAutoUsage(p, same)...)
+	account, _, err := selectAutoAccount(results, activeID)
+	if err != nil && len(other) > 0 {
+		results = append(results, fetchAllAutoUsage(p, other)...)
+		account, _, err = selectAutoAccount(results, activeID)
+	}
 	if err != nil {
 		return err
 	}
@@ -49,6 +61,9 @@ func handleAuto(p paths) error {
 	}
 
 	fmt.Printf("%s switched to %s", green("✓"), account.Name)
+	if account.Provider != accounts[active].Provider {
+		fmt.Printf(" [%s]", account.Provider.label())
+	}
 	if account.Email != "" {
 		fmt.Printf(" (%s)", account.Email)
 	}
@@ -56,13 +71,20 @@ func handleAuto(p paths) error {
 	return nil
 }
 
-func fetchAutoUsage(p paths, account Account) UsageResult {
-	fiveHour, weekly, err := fetchUsagePair(p, &account)
-	result := UsageResult{Account: account, Usage: weekly, FiveHour: fiveHour}
-	if err != nil {
-		result.Err = err.Error()
+func fetchAccountQuota(p paths, account Account) UsageResult {
+	switch account.Provider {
+	case providerAgy:
+		return fetchAgyUsage(p, account)
+	case providerCodex:
+		fiveHour, weekly, err := fetchUsagePair(p, &account)
+		result := UsageResult{Account: account, Usage: weekly, FiveHour: fiveHour}
+		if err != nil {
+			result.Err = err.Error()
+		}
+		return result
+	default:
+		return UsageResult{Account: account, Err: fmt.Sprintf("unknown provider %q", account.Provider)}
 	}
-	return result
 }
 
 func fetchAllAutoUsage(p paths, accounts []Account) []UsageResult {
@@ -75,7 +97,7 @@ func fetchAllAutoUsage(p paths, accounts []Account) []UsageResult {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = fetchAutoUsage(p, accounts[i])
+			results[i] = fetchAccountQuota(p, accounts[i])
 		}()
 	}
 	wg.Wait()
@@ -89,10 +111,7 @@ func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, e
 	}
 
 	weekly, fiveHour, err := autoQuotaRemaining(results[active])
-	if err != nil {
-		return Account{}, false, fmt.Errorf("quota unavailable for %s: %w", results[active].Account.Name, err)
-	}
-	if weekly > 0 && fiveHour > 0 {
+	if err == nil && weekly > 0 && fiveHour > 0 {
 		return results[active].Account, true, nil
 	}
 
@@ -100,9 +119,6 @@ func selectAutoAccount(results []UsageResult, activeID string) (Account, bool, e
 	var bestWeekly, bestFiveHour float64
 	var unreadable []string
 	for i := range results {
-		if i == active {
-			continue
-		}
 		weekly, fiveHour, err := autoQuotaRemaining(results[i])
 		if err != nil {
 			// A candidate cx cannot read is not a verdict on the ones it can.
@@ -139,21 +155,34 @@ func autoQuotaRemaining(result UsageResult) (weekly, fiveHour float64, err error
 	if result.Err != "" {
 		return 0, 0, errors.New(result.Err)
 	}
+	if len(result.QuotaGroups) > 0 {
+		for _, group := range result.QuotaGroups {
+			w, f, err := quotaRemaining(group.Weekly, group.FiveHour)
+			if err == nil && w > 0 && f > 0 && (w > weekly || (w == weekly && f > fiveHour)) {
+				weekly, fiveHour = w, f
+			}
+		}
+		return weekly, fiveHour, nil
+	}
+	return quotaRemaining(result.Usage, result.FiveHour)
+}
+
+func quotaRemaining(usage WeeklyUsage, five *WeeklyUsage) (weekly, fiveHour float64, err error) {
 	weekly, fiveHour = 100, 100
-	if result.Usage == (WeeklyUsage{}) && result.FiveHour == nil {
+	if usage == (WeeklyUsage{}) && five == nil {
 		return 0, 0, errors.New("no quota windows available")
 	}
-	if result.Usage != (WeeklyUsage{}) {
-		if !result.Usage.Fresh || result.Usage.WindowMinutes <= 0 {
+	if usage != (WeeklyUsage{}) {
+		if !usage.Fresh || usage.WindowMinutes <= 0 {
 			return 0, 0, errors.New("weekly quota is unavailable")
 		}
-		weekly = clamp(100-result.Usage.UsedPercent, 0, 100)
+		weekly = clamp(100-usage.UsedPercent, 0, 100)
 	}
-	if result.FiveHour != nil {
-		if !result.FiveHour.Fresh || result.FiveHour.WindowMinutes <= 0 {
+	if five != nil {
+		if !five.Fresh || five.WindowMinutes <= 0 {
 			return 0, 0, errors.New("5-hour quota is unavailable")
 		}
-		fiveHour = clamp(100-result.FiveHour.UsedPercent, 0, 100)
+		fiveHour = clamp(100-five.UsedPercent, 0, 100)
 	}
 	return weekly, fiveHour, nil
 }

@@ -42,6 +42,10 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			rs := fetchAllUsage(p, []Account{a})
 			<-usageSem
 			r := rs[0]
+			if a.Provider != providerCodex {
+				updates <- usageUpdate{Index: i, Result: r, Final: true}
+				return
+			}
 			if r.Err == "" {
 				annotateWindowState(p, &r)
 				annotateFiveHourWindowState(p, &r)

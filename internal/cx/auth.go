@@ -187,6 +187,52 @@ func configureCodexHomeSelection(p paths, home string, a Account) error {
 }
 
 func switchAccount(p paths, a Account) error {
+	return activateAccount(p, a, true)
+}
+
+func activateAccount(p paths, a Account, setDefaultProvider bool) error {
+	lock, err := lockState(p)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	var stored Account
+	if err := readJSON(p.accountMeta(a.ID), &stored); err != nil {
+		return fmt.Errorf("read account: %w", err)
+	}
+	if stored.ID != a.ID || stored.Provider != a.Provider {
+		return fmt.Errorf("account changed: %s", a.Name)
+	}
+	a = stored
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	switch a.Provider {
+	case providerCodex:
+		if err := switchCodexAccount(p, a); err != nil {
+			return err
+		}
+	case providerAgy:
+		if err := requireAgyCredential(p, a); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown provider %q", a.Provider)
+	}
+	st.selectAccount(a)
+	if setDefaultProvider {
+		st.DefaultProvider = a.Provider
+	}
+	now := time.Now()
+	a.LastUsedAt, a.UpdatedAt = &now, now
+	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+		return err
+	}
+	return saveState(p, st)
+}
+
+func switchCodexAccount(p paths, a Account) error {
 	ident, err := parseAuth(p.accountAuth(a.ID))
 	if err != nil {
 		return fmt.Errorf("invalid credential for %s: %w", a.Name, err)
@@ -197,15 +243,5 @@ func switchAccount(p paths, a Account) error {
 	if a.Email != "" && ident.Email != "" && !strings.EqualFold(a.Email, ident.Email) {
 		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.Email, ident.Email)
 	}
-	if err := configureCodexHomeSelection(p, p.CodexHome, a); err != nil {
-		return err
-	}
-
-	now := time.Now()
-	a.LastUsedAt = &now
-	a.UpdatedAt = now
-	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
-		return err
-	}
-	return saveState(p, State{ActiveID: a.ID})
+	return configureCodexHomeSelection(p, p.CodexHome, a)
 }

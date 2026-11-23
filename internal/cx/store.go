@@ -11,11 +11,31 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
+type provider string
+
+const (
+	providerCodex provider = ""
+	providerAgy   provider = "agy"
+)
+
+func (p provider) label() string {
+	switch p {
+	case providerCodex:
+		return "Codex"
+	case providerAgy:
+		return "Antigravity"
+	default:
+		return string(p)
+	}
+}
+
 type Account struct {
 	ID              string     `json:"id"`
+	Provider        provider   `json:"provider,omitempty"`
 	Name            string     `json:"name"`
 	AccountID       string     `json:"account_id"`
 	Email           string     `json:"email,omitempty"`
@@ -28,7 +48,31 @@ type Account struct {
 }
 
 type State struct {
-	ActiveID string `json:"active_id,omitempty"`
+	ActiveID         string              `json:"active_id,omitempty"`
+	DefaultProvider  provider            `json:"active_provider,omitempty"`
+	ProviderAccounts map[provider]string `json:"provider_accounts,omitempty"`
+}
+
+func (s State) defaultAccountID() string {
+	return s.selectedAccountID(s.DefaultProvider)
+}
+
+func (s State) selectedAccountID(p provider) string {
+	if p == providerCodex {
+		return s.ActiveID
+	}
+	return s.ProviderAccounts[p]
+}
+
+func (s *State) selectAccount(a Account) {
+	if a.Provider == providerCodex {
+		s.ActiveID = a.ID
+		return
+	}
+	if s.ProviderAccounts == nil {
+		s.ProviderAccounts = make(map[provider]string)
+	}
+	s.ProviderAccounts[a.Provider] = a.ID
 }
 
 type WeeklyUsage struct {
@@ -99,6 +143,15 @@ func readJSON(path string, v any) error {
 }
 
 func listAccounts(p paths) ([]Account, error) {
+	return listAccountsFor(p, providerCodex)
+}
+
+func listAccountsFor(p paths, which provider) ([]Account, error) {
+	accounts, err := listAllAccounts(p)
+	return slices.DeleteFunc(accounts, func(a Account) bool { return a.Provider != which }), err
+}
+
+func listAllAccounts(p paths) ([]Account, error) {
 	ents, err := os.ReadDir(p.AccountsRoot)
 	if err != nil {
 		return nil, err
@@ -109,7 +162,7 @@ func listAccounts(p paths) ([]Account, error) {
 			continue
 		}
 		var a Account
-		if err := readJSON(p.accountMeta(e.Name()), &a); err != nil {
+		if err := readJSON(p.accountMeta(e.Name()), &a); err != nil || a.ID != e.Name() {
 			continue
 		}
 		out = append(out, a)
@@ -131,6 +184,9 @@ func listAccounts(p paths) ([]Account, error) {
 }
 
 func findIn(accounts []Account, selector string) (Account, error) {
+	if selector == "" {
+		return Account{}, errors.New("account name required")
+	}
 	s := strings.ToLower(selector)
 	var matches []Account
 	for _, a := range accounts {
@@ -151,7 +207,11 @@ func findIn(accounts []Account, selector string) (Account, error) {
 }
 
 func findAccount(p paths, selector string) (Account, error) {
-	as, err := listAccounts(p)
+	return findAccountFor(p, selector, providerCodex)
+}
+
+func findAccountFor(p paths, selector string, which provider) (Account, error) {
+	as, err := listAccountsFor(p, which)
 	if err != nil {
 		return Account{}, err
 	}
@@ -168,6 +228,18 @@ func loadState(p paths) (State, error) {
 }
 func saveState(p paths, s State) error { return writeJSON(p.statePath(), s) }
 
+func lockState(p paths) (*os.File, error) {
+	lock, err := os.OpenFile(p.statePath()+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return lock, nil
+}
+
 func loadCache(p paths) (map[string]WeeklyUsage, error) {
 	var c cachedStatus
 	err := readJSON(p.cachePath(), &c)
@@ -182,13 +254,14 @@ func loadCache(p paths) (map[string]WeeklyUsage, error) {
 	}
 	return c.Accounts, nil
 }
+
 func saveFreshCache(p paths, rs []UsageResult) {
 	c, _ := loadCache(p)
 	if c == nil {
 		c = map[string]WeeklyUsage{}
 	}
 	for _, r := range rs {
-		if r.Err == "" {
+		if r.Account.Provider == providerCodex && r.Err == "" {
 			c[r.Account.ID] = r.Usage
 		}
 	}
@@ -216,11 +289,20 @@ func validateName(name string) error {
 }
 
 func renameAccount(p paths, selector, newName string) error {
+	return renameAccountFor(p, selector, newName, providerCodex)
+}
+
+func renameAccountFor(p paths, selector, newName string, which provider) error {
 	if err := validateName(newName); err != nil {
 		return err
 	}
 	newName = strings.TrimSpace(newName)
-	as, err := listAccounts(p)
+	lock, err := lockState(p)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	as, err := listAccountsFor(p, which)
 	if err != nil {
 		return err
 	}
@@ -239,13 +321,31 @@ func renameAccount(p paths, selector, newName string) error {
 }
 
 func removeAccount(p paths, selector string) error {
-	a, err := findAccount(p, selector)
+	return removeAccountFor(p, selector, providerCodex)
+}
+
+func removeAccountFor(p paths, selector string, which provider) error {
+	lock, err := lockState(p)
 	if err != nil {
 		return err
 	}
-	st, _ := loadState(p)
-	if st.ActiveID == a.ID {
-		return errors.New("cannot remove the active account; switch to another account first")
+	defer lock.Close()
+	a, err := findAccountFor(p, selector, which)
+	if err != nil {
+		return err
+	}
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	if st.selectedAccountID(which) == a.ID {
+		if which == providerCodex || which == st.DefaultProvider {
+			return errors.New("cannot remove the active account; switch to another account first")
+		}
+		delete(st.ProviderAccounts, which)
+		if err := saveState(p, st); err != nil {
+			return err
+		}
 	}
 	return os.RemoveAll(p.accountDir(a.ID))
 }

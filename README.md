@@ -1,14 +1,14 @@
 # cx
 
-A small Codex account switcher for macOS and Linux.
+A small account switcher for Codex and Antigravity on macOS and Linux.
 
-Add multiple ChatGPT accounts, switch between them, and see each account's live 5-hour and weekly quotas with reset times — without touching your Codex sessions, history, or config.
+Switch between accounts and see live quota and reset times in one dashboard.
 
 ![cx dashboard](assets/cx-dashboard.svg)
 
 ## Install
 
-Requires the Codex CLI.
+Install the CLI for each provider you use. Antigravity support requires `agy` 1.5.14 or later.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
@@ -48,14 +48,15 @@ Most setups never hit the stale-session case, so cx does not install this for yo
 cx              # dashboard: pick an account, see quotas
 cx add work     # add another account via Codex device auth
 cx use work     # switch account
-cx auto         # switch only if the current account ran out of quota
+cx auto         # choose an account by available quota
+cx run          # start the agent for the selected account
 ```
 
 That's it for daily use. Everything else:
 
 ```sh
 cx status [NAME] [--json]   # live quota status for every account
-cx current                  # show active account
+cx current                  # show the account for cx run
 cx list                     # list accounts, no network
 cx rename OLD NEW
 cx remove NAME
@@ -64,6 +65,38 @@ cx doctor                   # verify files, symlink and credentials
 cx update                   # install latest release
 cx version
 ```
+
+### Antigravity
+
+If you already use Antigravity, run `cx agy init` to register that login as `primary`. This profile uses your existing Antigravity configuration. To choose a different name, run `cx agy init NAME`.
+
+To add another Google account:
+
+1. In an interactive terminal, run `cx agy add work`. Use a different name for each account.
+2. Open the Google sign-in URL that `agy` prints. Select the Google account you want to add.
+3. If Google gives you an authorization code, paste it into the same terminal.
+
+Each new profile has its own home directory, credentials, configuration, and conversation history.
+
+```sh
+cx list               # list registered accounts
+cx use agy/work       # select work
+cx use agy/           # pick an Antigravity account
+cx status agy/work    # show quota by model group
+cx run                # start the agent for the selected account
+```
+
+Use `cx agy run` to start the last selected Antigravity profile directly. Use `cx agy help` to list the Antigravity commands.
+
+The dashboard lists one provider's accounts directly. If you use more than one provider, it opens groups in alphabetical order by provider name. A green dot marks each provider's active account. Press Enter on an account to activate it for that provider.
+
+Press `d` on a group or one of its accounts to set the default provider for `cx run` and `cx auto`. The group heading shows `default`.
+
+Press the left arrow to fold the group under the cursor. The folded heading shows the active account. Press the right arrow or Enter to open the group.
+
+The dashboard shows one row per Antigravity model group. The columns show the remaining 5-hour and weekly quotas. A wide terminal also shows the time until reset. Run `cx status agy/NAME` for the full quota details.
+
+Use `agy/NAME` or `codex/NAME` to select an account by provider. A name without a prefix selects a Codex account. The same prefixes work with `cx status`, `cx rename`, and `cx remove`.
 
 ### Adding the right account
 
@@ -77,13 +110,15 @@ cx verifies the email that device auth actually returned and refuses to save the
 
 ### Automatic selection
 
-`cx auto` keeps the active account as long as it has quota left in every window reported by the server (5-hour, weekly, or both). Once a reported window runs out, it switches to the usable account with the *least* weekly quota remaining — spending the nearly-empty accounts first and keeping the fresh ones in reserve. It exits with status 1 without switching if every account is exhausted.
+`cx auto` starts with the default provider. It keeps that provider's active account while it has quota. If necessary, cx looks for another account from the same provider. It tries the other provider only if the first provider has no usable account.
 
-A candidate whose quota cx cannot read — a stale credential, one slow response among the concurrent ones, an account the backend reports no Codex window for — is passed over rather than failing the whole selection, which is what it used to do. If passing them over leaves nothing usable, cx names each account it could not read instead of reporting an exhausted pool: only one of those two is fixed by waiting.
+Codex requires quota in every reported window. Antigravity requires quota in every reported window of at least one model group. For each usable account, cx ranks its best available group by weekly quota and then by 5-hour quota. It selects the account with the least remaining quota.
+
+If cx cannot read an account's quota, it skips that account. If no account qualifies, cx keeps the selection and exits with status 1.
 
 ### Quota windows
 
-Opening the dashboard starts any rolling quota window that hasn't started yet, by sending one minimal Codex request per account. This spends a handful of tokens so your 5-hour and weekly reset countdowns stay active. Accounts with no quota left are shown as `window not started · usage limit reached`. (`cx auto` never does this — it only reads.)
+Opening the dashboard starts unused Codex quota windows with one minimal request per account. This uses a few tokens. Antigravity quota reads and `cx auto` use read-only quota checks.
 
 ### Banked resets
 

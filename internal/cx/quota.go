@@ -28,6 +28,7 @@ type UsageResult struct {
 	Account      Account
 	Usage        WeeklyUsage
 	FiveHour     *WeeklyUsage
+	QuotaGroups  []quotaGroup
 	Err          string
 	PrimeErr     string
 	PrimeSkipped string
@@ -38,6 +39,12 @@ type UsageResult struct {
 	// SignInExpired is set when the backend rejects the stored credential and
 	// Codex cannot refresh it. Err then names the fix instead of the raw reply.
 	SignInExpired bool
+}
+
+type quotaGroup struct {
+	Name     string       `json:"name"`
+	Weekly   WeeklyUsage  `json:"weekly"`
+	FiveHour *WeeklyUsage `json:"five_hour,omitempty"`
 }
 
 type rpcEnvelope struct {
@@ -74,6 +81,10 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if a.Provider != providerCodex {
+				out[i] = fetchAccountQuota(p, a)
+				return
+			}
 
 			var fiveHour *WeeklyUsage
 			var weekly WeeklyUsage
@@ -132,7 +143,7 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	results := fetchAllUsage(p, accounts)
 	for i := range results {
-		if results[i].Err == "" {
+		if results[i].Account.Provider == providerCodex && results[i].Err == "" {
 			annotateWindowState(p, &results[i])
 			annotateFiveHourWindowState(p, &results[i])
 		}
@@ -141,7 +152,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	sem := make(chan struct{}, primeConcurrency)
 	var wg sync.WaitGroup
 	for i := range results {
-		if results[i].Err != "" || results[i].Usage.WindowStarted {
+		if results[i].Account.Provider != providerCodex || results[i].Err != "" || results[i].Usage.WindowStarted {
 			continue
 		}
 		wg.Add(1)

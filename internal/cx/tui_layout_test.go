@@ -319,7 +319,7 @@ func TestBankedKeyIsInertWithoutAnyBankedResets(t *testing.T) {
 	if strings.Contains(frame, "b banked") {
 		t.Fatalf("the footer should not offer a key that does nothing:\n%s", frame)
 	}
-	if help := renderHelpScreen(v.size, bankedUIActive(v.results)); strings.Contains(help, "banked reset dates") {
+	if help := renderHelpScreen(v.size, bankedUIActive(v.results), false); strings.Contains(help, "banked reset dates") {
 		t.Fatalf("the help screen should not list it either:\n%s", help)
 	}
 
@@ -382,14 +382,14 @@ func TestHelpScreenCutsToFit(t *testing.T) {
 	useColor = false
 	defer func() { useColor = old }()
 
-	full := renderHelpScreen(termSize{rows: 40, cols: 100}, true)
+	full := renderHelpScreen(termSize{rows: 40, cols: 100}, true, false)
 	if !strings.Contains(full, "b ") || !strings.Contains(full, "q  ·  Esc") {
 		t.Fatalf("a tall terminal should list every key:\n%s", full)
 	}
 
 	for _, rows := range []int{13, 8, 4} {
 		size := termSize{rows: rows, cols: 100}
-		screen := renderHelpScreen(size, true)
+		screen := renderHelpScreen(size, true, false)
 		if got := strings.Count(screen, "\n"); got > size.rows-1 {
 			t.Fatalf("help screen is %d rows on a %d-row terminal:\n%s", got, size.rows, screen)
 		}
@@ -448,7 +448,7 @@ func TestOverlaysKeepTheirHeadroomOnAShortTerminal(t *testing.T) {
 	for _, rows := range []int{3, 4, 5, 6, 8, 13, 40} {
 		v.size = termSize{rows: rows, cols: 100}
 		for name, screen := range map[string]string{
-			"keys":   renderHelpScreen(v.size, true),
+			"keys":   renderHelpScreen(v.size, true, false),
 			"banked": renderBankedScreen(v),
 		} {
 			if got := strings.Count(screen, "\n"); got > rows-1 {

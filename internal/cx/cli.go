@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"syscall"
 )
 
 var Version = "dev"
@@ -118,6 +120,14 @@ func Main() {
 		fmt.Printf("%s refreshed credentials for %s (%s)\n", green("✓"), a.Name, emptyDash(a.Email))
 	case "use":
 		handleUse(p, args[1:])
+	case "agy":
+		if err := handleAgy(p, args[1:]); err != nil {
+			fatal(err)
+		}
+	case "run":
+		if err := runAgent(p, args[1:], nil); err != nil {
+			fatal(err)
+		}
 	case "auto":
 		if len(args) != 1 {
 			fatal(errors.New("usage: cx auto"))
@@ -136,7 +146,11 @@ func Main() {
 		if len(args) != 3 {
 			fatal(errors.New("usage: cx rename OLD NEW"))
 		}
-		if err := renameAccount(p, args[1], args[2]); err != nil {
+		which, name, err := parseAccountSelector(args[1], providerCodex)
+		if err != nil {
+			fatal(err)
+		}
+		if err := renameAccountFor(p, name, args[2], which); err != nil {
 			fatal(err)
 		}
 		fmt.Printf("%s renamed %s → %s\n", green("✓"), args[1], args[2])
@@ -144,7 +158,11 @@ func Main() {
 		if len(args) != 2 {
 			fatal(errors.New("usage: cx remove NAME"))
 		}
-		if err := removeAccount(p, args[1]); err != nil {
+		which, name, err := parseAccountSelector(args[1], providerCodex)
+		if err != nil {
+			fatal(err)
+		}
+		if err := removeAccountFor(p, name, which); err != nil {
 			fatal(err)
 		}
 		fmt.Printf("%s removed %s\n", green("✓"), args[1])
@@ -182,6 +200,27 @@ func handleInit(p paths) {
 }
 
 func handleUse(p paths, args []string) {
+	if err := useAccount(p, args, nil); err != nil {
+		fatal(err)
+	}
+}
+
+func parseAccountSelector(selector string, fallback provider) (provider, string, error) {
+	prefix, name, ok := strings.Cut(selector, "/")
+	if !ok {
+		return fallback, selector, nil
+	}
+	switch prefix {
+	case "codex":
+		return providerCodex, name, nil
+	case "agy":
+		return providerAgy, name, nil
+	default:
+		return fallback, "", fmt.Errorf("unknown provider %q", prefix)
+	}
+}
+
+func useAccount(p paths, args []string, selectedProvider *provider) error {
 	resume := false
 	name := ""
 	for _, a := range args {
@@ -191,37 +230,60 @@ func handleUse(p paths, args []string) {
 		case name == "":
 			name = a
 		default:
-			fatal(errors.New("usage: cx use [NAME] [--resume]"))
+			return errors.New("usage: cx use [PROVIDER/][NAME] [--resume]")
 		}
 	}
+	fallback := providerCodex
+	if selectedProvider != nil {
+		fallback = *selectedProvider
+	}
+	which, selector, err := parseAccountSelector(name, fallback)
+	if err != nil {
+		return err
+	}
 	var acct Account
-	var err error
-	if name == "" {
-		acct, err = pickAccount(p)
+	if strings.Contains(name, "/") {
+		selectedProvider = &which
+	}
+	if selector == "" {
+		acct, err = pickAccount(p, selectedProvider)
 	} else {
-		acct, err = findAccount(p, name)
+		acct, err = findAccountFor(p, selector, which)
 	}
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	if err := switchAccount(p, acct); err != nil {
-		fatal(err)
+		return err
 	}
 	fmt.Printf("%s switched to %s", green("✓"), acct.Name)
+	if acct.Provider != providerCodex {
+		fmt.Printf(" [%s]", acct.Provider.label())
+	}
 	if acct.Email != "" {
 		fmt.Printf(" (%s)", acct.Email)
 	}
 	fmt.Println()
 	if resume {
+		if acct.Provider == providerAgy {
+			return launchAgy(p, acct, []string{"--continue"})
+		}
 		cmd := exec.Command("codex", "-c", `cli_auth_credentials_store="file"`, "resume", "--last")
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			fatal(err)
-		}
+		return cmd.Run()
 	}
+	return nil
 }
 
 func handleStatus(p paths, args []string) int {
+	return handleProviderStatus(p, args, providerCodex)
+}
+
+func handleProviderStatus(p paths, args []string, which provider) int {
+	command := "cx status"
+	if which == providerAgy {
+		command = "cx agy status"
+	}
 	jsonOut := false
 	name := ""
 	for _, a := range args {
@@ -231,10 +293,20 @@ func handleStatus(p paths, args []string) int {
 		case name == "":
 			name = a
 		default:
-			fatal(errors.New("usage: cx status [NAME] [--json]"))
+			fatal(errors.New("usage: " + command + " [NAME] [--json]"))
 		}
 	}
-	accounts, err := listAccounts(p)
+	var accounts []Account
+	var err error
+	if name == "" && which == providerCodex {
+		accounts, err = listAllAccounts(p)
+	} else {
+		which, name, err = parseAccountSelector(name, which)
+		if err != nil {
+			fatal(err)
+		}
+		accounts, err = listAccountsFor(p, which)
+	}
 	if err != nil {
 		fatal(err)
 	}
@@ -282,28 +354,36 @@ func handleStatus(p paths, args []string) int {
 }
 
 func handleList(p paths) {
-	accounts, err := listAccounts(p)
+	accounts, err := listAllAccounts(p)
 	if err != nil {
 		fatal(err)
 	}
 	st, _ := loadState(p)
 	for _, a := range accounts {
 		marker := " "
-		if a.ID == st.ActiveID {
+		if a.ID == st.defaultAccountID() {
 			marker = "*"
+		}
+		if a.Provider != providerCodex {
+			fmt.Printf("%s %-16s [%s]\n", marker, a.Name, a.Provider.label())
+			continue
 		}
 		fmt.Printf("%s %-16s %-28s %s\n", marker, a.Name, emptyDash(a.Email), emptyDash(a.Plan))
 	}
 }
 
 func handleCurrent(p paths) {
-	accounts, err := listAccounts(p)
+	accounts, err := listAllAccounts(p)
 	if err != nil {
 		fatal(err)
 	}
 	st, _ := loadState(p)
 	for _, a := range accounts {
-		if a.ID == st.ActiveID {
+		if a.ID == st.defaultAccountID() {
+			if a.Provider != providerCodex {
+				fmt.Printf("%s  [%s]\n", a.Name, a.Provider.label())
+				return
+			}
 			fmt.Printf("%s  %s  %s\n", a.Name, emptyDash(a.Email), emptyDash(a.Plan))
 			return
 		}
@@ -311,17 +391,55 @@ func handleCurrent(p paths) {
 	fmt.Println("none")
 }
 
+func runAgent(p paths, args []string, selectedProvider *provider) error {
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	which := st.DefaultProvider
+	if selectedProvider != nil {
+		which = *selectedProvider
+	}
+	accounts, err := listAccountsFor(p, which)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(accounts, func(a Account) bool { return a.ID == st.selectedAccountID(which) })
+	if i < 0 {
+		return errors.New("no selected account; run cx use NAME or cx agy use NAME")
+	}
+	switch which {
+	case providerCodex:
+		return execAgent(exec.Command("codex", append([]string{"-c", `cli_auth_credentials_store="file"`}, args...)...))
+	case providerAgy:
+		return launchAgy(p, accounts[i], args)
+	default:
+		return fmt.Errorf("unknown provider %q", which)
+	}
+}
+
+func execAgent(cmd *exec.Cmd) error {
+	if cmd.Err != nil {
+		return cmd.Err
+	}
+	return syscall.Exec(cmd.Path, cmd.Args, cmd.Environ())
+}
+
 func printHelp() {
-	fmt.Print(`cx — minimal Codex account switcher
+	fmt.Print(`cx — Codex and Antigravity account switcher
 
 Usage:
   cx                                 live quota dashboard; starts unused windows
-  cx status [NAME] [--json]          live quota status; starts unused windows
+  cx status [[PROVIDER/]NAME] [--json]
+                                     live quota status
   cx add [NAME] [--expect EMAIL]     add an account with Codex device auth
   cx init                            import an existing Codex login as "primary"
   cx relogin NAME [--expect EMAIL]   refresh one account's credential safely
-  cx use [NAME] [--resume]           switch account; interactive if NAME omitted
-  cx auto                            keep or switch to the weakest usable account
+  cx use [PROVIDER/][NAME] [--resume]
+                                     switch account; pick if NAME is omitted
+  cx auto                            select an account, starting with the default provider
+  cx run [ARGS...]                   launch the active agent
+  cx agy help                        show Antigravity account commands
   cx current                         show the active account
   cx list                            list accounts without network access
   cx rename OLD NEW                  rename an account

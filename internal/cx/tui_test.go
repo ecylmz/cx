@@ -98,7 +98,7 @@ func TestDashboardNonTerminalAndEmptyAccountErrors(t *testing.T) {
 	if err := runDashboard(p); err == nil || !strings.Contains(err.Error(), "no accounts") {
 		t.Fatalf("expected no-account error, got %v", err)
 	}
-	if _, err := pickAccount(p); err == nil {
+	if _, err := pickAccount(p, nil); err == nil {
 		t.Fatal("expected empty picker error")
 	}
 

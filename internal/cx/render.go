@@ -57,6 +57,25 @@ func cyan(s string) string   { return ansi("36", s) }
 func bold(s string) string   { return ansi("1", s) }
 func dim(s string) string    { return ansi("2", s) }
 
+func neutralLine(s string, faint bool) string {
+	if !useColor {
+		return s
+	}
+	var plain strings.Builder
+	for {
+		i := strings.IndexByte(s, '\x1b')
+		if i < 0 {
+			plain.WriteString(s)
+			if faint {
+				return dim(plain.String())
+			}
+			return plain.String()
+		}
+		plain.WriteString(s[:i])
+		s = s[escapeEnd(s, i):]
+	}
+}
+
 // visibleCells counts the display cells a rendered line occupies, skipping the
 // escape sequences that carry no width.
 func visibleCells(s string) int {
@@ -157,6 +176,7 @@ func quotaColor(left float64, s string) string {
 	}
 	return green(s)
 }
+
 func clamp(v, lo, hi float64) float64 {
 	return min(max(v, lo), hi)
 }
@@ -167,10 +187,12 @@ func barCells(percent float64, width int) (filled, empty string) {
 	n := int(math.Round(clamp(percent, 0, 100) / 100 * float64(width)))
 	return strings.Repeat("█", n), strings.Repeat("░", width-n)
 }
+
 func quotaBar(left float64, width int) string {
 	filled, empty := barCells(left, width)
 	return filled + dim(empty)
 }
+
 func normalizeLocale(v string) string {
 	v, _, _ = strings.Cut(strings.TrimSpace(v), ".")
 	v, _, _ = strings.Cut(v, "@")
@@ -348,13 +370,58 @@ func usageLines(r UsageResult) []string { return usageLinesWidth(r, 0) }
 // usageLinesWidth fits the meter and the trailing detail to cols display cells.
 // cols <= 0 means unbounded.
 func usageLinesWidth(r UsageResult, cols int) []string {
+	if len(r.QuotaGroups) == 0 {
+		return quotaWindowLines(r.Usage, r.FiveHour, cols)
+	}
+	var lines []string
+	for _, group := range r.QuotaGroups {
+		lines = append(lines, bold(group.Name))
+		lines = append(lines, quotaWindowLines(group.Weekly, group.FiveHour, cols)...)
+	}
+	return lines
+}
+
+func dashboardQuotaLines(r UsageResult, cols int) []string {
+	if len(r.QuotaGroups) == 0 {
+		return quotaWindowLines(r.Usage, r.FiveHour, cols)
+	}
+	const gutterWidth, gap = 3, 2
+	nameWidth, windowWidth := 21, 20
+	showReset := cols <= 0 || cols >= gutterWidth+nameWidth+2*(gap+windowWidth)
+	if !showReset {
+		windowWidth = 8
+		nameWidth = min(nameWidth, max(1, cols-gutterWidth-2*(gap+windowWidth)))
+	}
+	now := time.Now()
+	window := func(u *WeeklyUsage) string {
+		if u == nil || u.WindowMinutes <= 0 {
+			return padStyled(dim("—"), "—", windowWidth)
+		}
+		left := clamp(100-u.UsedPercent, 0, 100)
+		pct, reset := fmt.Sprintf("%.1f%%", left), ""
+		if showReset && u.ResetsAt > 0 {
+			reset = " · " + resetTextCompact(u.ResetsAt, now)
+		}
+		return padStyled(quotaColor(left, pct)+dim(reset), pct+reset, windowWidth)
+	}
+
+	space := strings.Repeat(" ", gap)
+	lines := []string{strings.Repeat(" ", nameWidth+gap) + dim(padCell("5 hour", windowWidth)+space+"weekly")}
+	for _, group := range r.QuotaGroups {
+		line := padCell(fitCells(group.Name, nameWidth), nameWidth) + space + window(group.FiveHour) + space + window(&group.Weekly)
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
+	return lines
+}
+
+func quotaWindowLines(weekly WeeklyUsage, fiveHour *WeeklyUsage, cols int) []string {
 	barWidth, compact := barWidthFor(cols), cols > 0 && cols < compactBelowCols
 	lines := make([]string, 0, 2)
-	if r.FiveHour != nil && r.FiveHour.WindowMinutes > 0 {
-		lines = append(lines, labeledUsageLine("5 hour", *r.FiveHour, barWidth, compact))
+	if fiveHour != nil && fiveHour.WindowMinutes > 0 {
+		lines = append(lines, labeledUsageLine("5 hour", *fiveHour, barWidth, compact))
 	}
-	if r.Usage.WindowMinutes > 0 || !r.Usage.FetchedAt.IsZero() {
-		lines = append(lines, labeledUsageLine("weekly", r.Usage, barWidth, compact))
+	if weekly.WindowMinutes > 0 || !weekly.FetchedAt.IsZero() {
+		lines = append(lines, labeledUsageLine("weekly", weekly, barWidth, compact))
 	}
 	return lines
 }
@@ -646,10 +713,13 @@ func printStatus(p paths, results []UsageResult) {
 	fmt.Println()
 	for i, r := range results {
 		marker := dim("○")
-		if r.Account.ID == st.ActiveID {
+		if r.Account.ID == st.defaultAccountID() {
 			marker = green("●")
 		}
 		fmt.Printf("%s %s", marker, bold(r.Account.Name))
+		if r.Account.Provider != providerCodex {
+			fmt.Printf(" [%s]", r.Account.Provider.label())
+		}
 		if r.Account.Plan != "" {
 			fmt.Printf(" · %s", r.Account.Plan)
 		}
@@ -696,11 +766,14 @@ func printStatus(p paths, results []UsageResult) {
 
 type jsonAccountStatus struct {
 	Name             string        `json:"name"`
+	Provider         provider      `json:"provider,omitempty"`
 	Email            string        `json:"email,omitempty"`
 	Plan             string        `json:"plan,omitempty"`
 	Active           bool          `json:"active"`
 	FiveHour         *WeeklyUsage  `json:"five_hour,omitempty"`
-	Weekly           WeeklyUsage   `json:"weekly"`
+	Weekly           *WeeklyUsage  `json:"weekly,omitempty"`
+	QuotaGroups      []quotaGroup  `json:"quota_groups,omitempty"`
+	Error            string        `json:"error,omitempty"`
 	BankedResets     []BankedReset `json:"banked_resets"`
 	BankedResetError string        `json:"banked_reset_error,omitempty"`
 }
@@ -719,16 +792,23 @@ func statusJSON(p paths, results []UsageResult) any {
 		if banked == nil && r.BankedLoaded {
 			banked = []BankedReset{}
 		}
-		out = append(out, jsonAccountStatus{
+		account := jsonAccountStatus{
 			Name:             r.Account.Name,
+			Provider:         r.Account.Provider,
 			Email:            r.Account.Email,
 			Plan:             r.Account.Plan,
-			Active:           r.Account.ID == st.ActiveID,
+			Active:           r.Account.ID == st.defaultAccountID(),
 			FiveHour:         r.FiveHour,
-			Weekly:           weekly,
+			QuotaGroups:      r.QuotaGroups,
 			BankedResets:     banked,
 			BankedResetError: r.BankedErr,
-		})
+		}
+		if r.Account.Provider == providerCodex {
+			account.Weekly = &weekly
+		} else {
+			account.Error = r.Err
+		}
+		out = append(out, account)
 	}
 	return map[string]any{"version": Version, "accounts": out}
 }

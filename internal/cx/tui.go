@@ -2,11 +2,13 @@ package cx
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,14 +66,48 @@ func terminalSize() termSize {
 // terminal it has to fit into. State is read once per frame here rather than
 // once per keypress, which is what a cursor move used to cost.
 type dashboardView struct {
-	state       State
-	accounts    []Account
-	results     []UsageResult
-	sel         int
-	footer      string
-	size        termSize
-	refreshedAt time.Time
-	overlay     overlay
+	state        State
+	accounts     []Account
+	results      []UsageResult
+	sel          int
+	footer       string
+	size         termSize
+	refreshedAt  time.Time
+	overlay      overlay
+	foldedGroups map[provider]bool
+}
+
+func (v dashboardView) folded(p provider) bool {
+	return v.hasProviderGroups() && v.foldedGroups[p]
+}
+
+func (v dashboardView) groupStart(i int) bool {
+	return i == 0 || v.accounts[i-1].Provider != v.accounts[i].Provider
+}
+
+func (v dashboardView) hasProviderGroups() bool {
+	return len(v.accounts) > 1 && v.accounts[0].Provider != v.accounts[len(v.accounts)-1].Provider
+}
+
+func (v dashboardView) visibleAccounts() []int {
+	visible := make([]int, 0, len(v.accounts))
+	for i, a := range v.accounts {
+		if !v.folded(a.Provider) || v.groupStart(i) {
+			visible = append(visible, i)
+		}
+	}
+	return visible
+}
+
+func dashboardAccounts(p paths) ([]Account, error) {
+	accounts, err := listAllAccounts(p)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortStableFunc(accounts, func(a, b Account) int {
+		return cmp.Compare(strings.ToLower(a.Provider.label()), strings.ToLower(b.Provider.label()))
+	})
+	return accounts, nil
 }
 
 // overlay is the full-screen layer drawn instead of the account list. Any key
@@ -90,7 +126,7 @@ func newDashboardView(p paths, accounts []Account, results []UsageResult, sel in
 }
 
 func runDashboard(p paths) error {
-	accounts, err := listAccounts(p)
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return err
 	}
@@ -118,8 +154,14 @@ func runDashboard(p paths) error {
 	keys := newKeyStream()
 
 	sel := 0
+	var v dashboardView
 	for {
-		v := newDashboardView(p, accounts, initialRefreshingResults(p, accounts), sel)
+		next := newDashboardView(p, accounts, initialRefreshingResults(p, accounts), sel)
+		next.foldedGroups = v.foldedGroups
+		for next.sel > 0 && next.folded(accounts[next.sel].Provider) && !next.groupStart(next.sel) {
+			next.sel--
+		}
+		v = next
 		v.footer = refreshFooter(0, len(accounts))
 		layout := drawDashboardFrame(v)
 		cache, _ := loadCache(p)
@@ -167,6 +209,14 @@ func runDashboard(p paths) error {
 				}
 				var next string
 				next, layout = applyKey(&v, ev.key, layout, updates != nil)
+				if next == "default" {
+					if err := applyDefaultProvider(p, &v); err != nil {
+						ticker.Stop()
+						return err
+					}
+					layout = drawDashboardFrame(v)
+					continue
+				}
 				if next != "switch" {
 					action = next
 					continue
@@ -204,9 +254,37 @@ func runDashboard(p paths) error {
 		case "quit":
 			return nil
 		case "refresh":
-			continue
+			accounts, err = dashboardAccounts(p)
+			if err != nil || len(accounts) == 0 {
+				return err
+			}
+			if v.sel < len(v.accounts) {
+				sel = accountIndex(accounts, v.accounts[v.sel].ID)
+			}
 		}
 	}
+}
+
+func applyDefaultProvider(p paths, v *dashboardView) error {
+	lock, err := lockState(p)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	which := v.accounts[v.sel].Provider
+	if st.DefaultProvider != which {
+		st.DefaultProvider = which
+		if err := saveState(p, st); err != nil {
+			return err
+		}
+	}
+	v.state = st
+	return nil
 }
 
 // applySwitch makes the selected account active and folds the result back into
@@ -218,10 +296,10 @@ func applySwitch(p paths, v *dashboardView) (rescan bool, err error) {
 		return false, nil
 	}
 	target := v.accounts[v.sel]
-	if err := switchAccount(p, target); err != nil {
+	if err := activateAccount(p, target, false); err != nil {
 		return false, err
 	}
-	accounts, err := listAccounts(p)
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return false, err
 	}
@@ -346,11 +424,30 @@ func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing b
 		return "", drawDashboardFrame(*v)
 	}
 	switch key {
-	case "enter":
-		if refreshing {
-			return "", layout
+	case "d":
+		if v.hasProviderGroups() && v.sel >= 0 && v.sel < len(v.accounts) {
+			return "default", layout
 		}
-		return "switch", layout
+		return "", layout
+	case "left", "right", "enter":
+		if v.hasProviderGroups() && v.sel >= 0 && v.sel < len(v.accounts) {
+			p := v.accounts[v.sel].Provider
+			open := key != "left"
+			if open == v.folded(p) {
+				if v.foldedGroups == nil {
+					v.foldedGroups = make(map[provider]bool)
+				}
+				v.foldedGroups[p] = !open
+				for !open && !v.groupStart(v.sel) {
+					v.sel--
+				}
+				return "", drawDashboardFrame(*v)
+			}
+		}
+		if key == "enter" && !refreshing {
+			return "switch", layout
+		}
+		return "", layout
 	case "r":
 		if refreshing {
 			return "", layout
@@ -369,7 +466,11 @@ func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing b
 		return "", drawDashboardFrame(*v)
 	}
 	oldSel := v.sel
-	v.sel = moveSelection(v.sel, len(v.accounts), key)
+	visible := v.visibleAccounts()
+	if len(visible) == 0 {
+		return "", layout
+	}
+	v.sel = visible[moveSelection(max(slices.Index(visible, v.sel), 0), len(visible), key)]
 	if v.sel == oldSel {
 		return "", layout
 	}
@@ -431,15 +532,24 @@ func drawDashboardFrame(v dashboardView) dashboardLayout {
 func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 	switch v.overlay {
 	case overlayKeys:
-		return renderHelpScreen(v.size, bankedUIActive(v.results)), dashboardLayout{}
+		return renderHelpScreen(v.size, bankedUIActive(v.results), v.hasProviderGroups()), dashboardLayout{}
 	case overlayBanked:
 		return renderBankedScreen(v), dashboardLayout{}
 	}
 
-	blocks := make([][]string, len(v.results))
+	visible := v.visibleAccounts()
+	grouped := v.hasProviderGroups()
+	blocks := make([][]string, len(visible))
+	headings := make([]bool, len(visible))
 	total := 0
-	for i := range v.results {
-		blocks[i] = accountBlock(v, i)
+	for i, index := range visible {
+		a := v.accounts[index]
+		blocks[i] = dashboardBlock(v, index)
+		if grouped && v.groupStart(index) && !v.folded(a.Provider) {
+			heading := "   " + providerGroupHeading(v.state, a.Provider, "▾")
+			headings[i] = true
+			blocks[i] = append([]string{heading}, blocks[i]...)
+		}
 		total += len(blocks[i])
 	}
 
@@ -460,11 +570,11 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 		if scroll = total > avail; scroll {
 			avail -= 2 // the two scroll hints
 		}
-		start, end = blockWindow(blocks, v.sel, avail)
+		start, end = blockWindow(blocks, slices.Index(visible, v.sel), avail)
 	}
 
 	var b strings.Builder
-	layout := dashboardLayout{headerRows: make([]int, len(blocks))}
+	layout := dashboardLayout{headerRows: make([]int, len(v.results))}
 	for i := range layout.headerRows {
 		layout.headerRows[i] = -1
 	}
@@ -481,7 +591,10 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 		write(scrollHint("↑", start))
 	}
 	for i := start; i < end; i++ {
-		layout.headerRows[i] = row
+		layout.headerRows[visible[i]] = row
+		if headings[i] {
+			layout.headerRows[visible[i]]++
+		}
 		for _, line := range blocks[i] {
 			write(line)
 		}
@@ -532,18 +645,56 @@ func scrollHint(arrow string, n int) string {
 }
 
 func dashboardTitle(v dashboardView) string {
-	// The hostname used to sit here; which account is live and how old the
-	// numbers are is what the screen is actually about.
-	name := "no active account"
-	for _, a := range v.accounts {
-		if a.ID == v.state.ActiveID {
-			name = a.Name
-			break
+	line := " " + bold("cx")
+	if !v.hasProviderGroups() {
+		name := "no active account"
+		for _, a := range v.accounts {
+			if a.ID == v.state.selectedAccountID(a.Provider) {
+				name = a.Name
+				if a.Provider != providerCodex {
+					name += " [" + a.Provider.label() + "]"
+				}
+				break
+			}
 		}
+		line += "  " + name
 	}
-	line := " " + bold("cx") + "  " + name
 	if !v.refreshedAt.IsZero() {
 		line += "  " + dim("· updated "+shortDuration(time.Since(v.refreshedAt))+" ago")
+	}
+	return line
+}
+
+func dashboardBlock(v dashboardView, i int) []string {
+	a := v.accounts[i]
+	if !v.folded(a.Provider) {
+		return accountBlock(v, i)
+	}
+	activeID := v.state.selectedAccountID(a.Provider)
+	active := ""
+	count := 0
+	for j := i; j < len(v.accounts) && v.accounts[j].Provider == a.Provider; j++ {
+		if v.accounts[j].ID == activeID {
+			active = v.accounts[j].Name
+		}
+		count++
+	}
+	noun := "accounts"
+	if count == 1 {
+		noun = "account"
+	}
+	line := providerGroupHeading(v.state, a.Provider, "▸")
+	if active != "" {
+		line += " · " + green(active)
+	}
+	line += fmt.Sprintf(" · %d %s", count, noun)
+	return []string{gutter(i == v.sel, 3) + line, ""}
+}
+
+func providerGroupHeading(st State, p provider, marker string) string {
+	line := marker + " " + bold(p.label())
+	if p == st.DefaultProvider {
+		line += dim(" · default")
 	}
 	return line
 }
@@ -552,18 +703,25 @@ func dashboardTitle(v dashboardView) string {
 // windowed by account instead of being cut at an arbitrary row.
 func accountBlock(v dashboardView, i int) []string {
 	selected := i == v.sel
-	indent := gutter(selected, 3)
 	r := v.results[i]
+	active := r.Account.ID == v.state.selectedAccountID(r.Account.Provider)
+	grouped := v.hasProviderGroups()
+	padding, cols := "", v.size.cols
+	if grouped {
+		// The selection bar starts under the first letter of the provider name.
+		padding = "    "
+		if cols > 0 {
+			cols = max(1, cols-len(padding))
+		}
+	}
 	lines := []string{dashboardAccountHeader(v.state, r.Account, selected)}
 	banked := func() {
-		lines = append(lines, bankedResetLinesWidth(r, indent, v.size.cols)...)
+		lines = append(lines, bankedResetLinesWidth(r, "", cols)...)
 	}
 	// The banked axis is the block's third meter line, so it is drawn with the
 	// other two rather than below whatever note follows them.
 	meters := func() {
-		for _, line := range usageLinesWidth(r, v.size.cols) {
-			lines = append(lines, indent+line)
-		}
+		lines = append(lines, dashboardQuotaLines(r, cols)...)
 		banked()
 	}
 
@@ -572,16 +730,16 @@ func accountBlock(v dashboardView, i int) []string {
 		if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
 			note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
 		}
-		lines = append(lines, indent+cyan(note))
+		lines = append(lines, cyan(note))
 	} else if r.Err == "" {
 		meters()
 		switch {
 		case r.PrimeErr != "":
-			lines = append(lines, indent+red("window start failed")+" "+r.PrimeErr)
+			lines = append(lines, red("window start failed")+" "+r.PrimeErr)
 		case r.PrimeSkipped != "":
-			lines = append(lines, indent+dim("window not started · "+r.PrimeSkipped))
+			lines = append(lines, dim("window not started · "+r.PrimeSkipped))
 		case r.Primed:
-			lines = append(lines, indent+dim("quota windows started just now"))
+			lines = append(lines, dim("quota windows started just now"))
 		}
 	} else if !r.Usage.FetchedAt.IsZero() {
 		meters()
@@ -589,10 +747,20 @@ func accountBlock(v dashboardView, i int) []string {
 		if r.SignInExpired {
 			note += " · " + red(r.Err)
 		}
-		lines = append(lines, indent+note)
+		lines = append(lines, note)
 	} else {
-		lines = append(lines, indent+red("unavailable")+" "+r.Err)
+		lines = append(lines, red("unavailable")+" "+r.Err)
 		banked()
+	}
+	for i, line := range lines {
+		if !active {
+			line = neutralLine(line, !selected)
+		}
+		width := 3
+		if i == 0 {
+			width = 2
+		}
+		lines[i] = padding + gutter(selected, width) + line
 	}
 	return append(lines, "")
 }
@@ -618,6 +786,10 @@ func dashboardKeys(results []UsageResult, cols int) string {
 	// and the help screen use.
 	if bankedUIActive(results) {
 		hints = append(hints, keyHint{"b banked", 4})
+	}
+	if len(results) > 1 && results[0].Account.Provider != results[len(results)-1].Account.Provider {
+		hints[1].text = "enter open/activate"
+		hints = append(hints, keyHint{"←/→ fold/open", 3}, keyHint{"d set default", 1})
 	}
 	hints = append(hints, keyHint{"? keys", 0}, keyHint{"q quit", 0})
 
@@ -645,7 +817,7 @@ func dashboardKeys(results []UsageResult, cols int) string {
 	return line
 }
 
-func renderHelpScreen(size termSize, banked bool) string {
+func renderHelpScreen(size termSize, banked, grouped bool) string {
 	keys := [][2]string{
 		{"↑ ↓  ·  k j", "move the cursor"},
 		{"PgUp PgDn", "jump " + fmt.Sprint(pageJump) + " accounts"},
@@ -653,6 +825,14 @@ func renderHelpScreen(size termSize, banked bool) string {
 		{"G  ·  End", "last account"},
 		{"enter", "switch to the selected account"},
 		{"r", "refresh quota and banked resets"},
+	}
+	if grouped {
+		keys[1][1] = "jump " + fmt.Sprint(pageJump) + " entries"
+		keys[4][1] = "open a group or activate an account"
+		keys = append(keys,
+			[2]string{"← / →", "fold / open the provider group"},
+			[2]string{"d", "set the default provider"},
+		)
 	}
 	if banked {
 		keys = append(keys, [2]string{"b", "banked reset dates, every account"})
@@ -741,6 +921,9 @@ func renderBankedScreen(v dashboardView) string {
 	now := time.Now()
 	rows := make([]row, 0, len(v.results)*2)
 	for i, r := range v.results {
+		if r.Account.Provider != providerCodex {
+			continue
+		}
 		name := bold(r.Account.Name)
 		if i == v.sel {
 			name = cyan(bold(r.Account.Name))
@@ -817,19 +1000,20 @@ func gutter(selected bool, width int) string {
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
 	active := dim("○")
-	if a.ID == st.ActiveID {
+	if a.ID == st.selectedAccountID(a.Provider) {
 		active = green("●")
 	}
 	// The selected account's name carries the highlight too, so the cursor is
 	// still readable where a terminal renders the bar faintly.
 	name := bold(a.Name)
 	if selected {
-		name = cyan(bold(a.Name))
+		name = cyan(name)
 	}
 	var b strings.Builder
 	// Pad before styling: a width verb counts the escape bytes of an already
 	// colored string as characters, which silently shrinks the column.
-	fmt.Fprintf(&b, "%s%s %s", gutter(selected, 2), active, padStyled(name, a.Name, accountNameCell))
+	b.WriteString(active + " ")
+	b.WriteString(padStyled(name, a.Name, accountNameCell))
 	// The plan cell keeps its width even when the account has no plan, so an
 	// account without one does not slide its email into the plan column.
 	if a.Plan != "" || a.Email != "" {
@@ -870,7 +1054,7 @@ func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboard
 	b.WriteString(syncOutputBegin)
 	for _, idx := range []int{oldSel, newSel} {
 		row := rows[idx]
-		for _, line := range accountBlock(v, idx) {
+		for _, line := range dashboardBlock(v, idx) {
 			fmt.Fprintf(&b, "\x1b[%d;1H%s%s", row, eraseCurrentLine, fitCells(line, v.size.cols))
 			row++
 		}
@@ -879,16 +1063,19 @@ func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboard
 	return b.String()
 }
 
-func pickAccount(p paths) (Account, error) {
-	accounts, err := listAccounts(p)
+func pickAccount(p paths, which *provider) (Account, error) {
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return Account{}, err
+	}
+	if which != nil {
+		accounts = slices.DeleteFunc(accounts, func(a Account) bool { return a.Provider != *which })
 	}
 	if len(accounts) == 0 {
 		return Account{}, errors.New("no accounts")
 	}
 	if !isTerminal() {
-		return Account{}, errors.New("interactive selection requires a terminal")
+		return Account{}, errors.New("interactive selection requires a terminal; pass an account name")
 	}
 	old, err := beginTerminalSession()
 	if err != nil {
@@ -917,15 +1104,20 @@ func pickAccount(p paths) (Account, error) {
 
 func renderAccountPicker(accounts []Account, sel int) string {
 	var b strings.Builder
-	b.WriteString(bold(" Switch Codex account"))
+	b.WriteString(bold(" Switch account"))
 	b.WriteString("\n\n")
+	showProvider := len(accounts) > 1 && accounts[0].Provider != accounts[len(accounts)-1].Provider
 	for i, a := range accounts {
 		selected := i == sel
 		name := a.Name
 		if selected {
 			name = cyan(bold(a.Name))
 		}
-		fmt.Fprintf(&b, "%s%s %s\n", gutter(selected, 2), padStyled(name, a.Name, 18), dim(emptyDash(a.Email)))
+		label := ""
+		if showProvider {
+			label = padCell(a.Provider.label(), 5) + " "
+		}
+		fmt.Fprintf(&b, "%s%s%s %s\n", gutter(selected, 2), label, padStyled(name, a.Name, 18), dim(a.Email))
 	}
 	b.WriteString("\n")
 	b.WriteString(dim(" ↑/↓ or j/k · enter switch · esc cancel"))

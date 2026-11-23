@@ -256,6 +256,35 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	if err != nil || !strings.Contains(out, "switched to primary") {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
+
+	installTestAgy(t)
+	t.Setenv("TEST_AGY_WEEKLY", "0.01")
+	if _, err := addAgyAccount(p, "google", true); err != nil {
+		t.Fatal(err)
+	}
+	quotas["acct-a"] = usage{weekly: 100, fiveHour: 50}
+	quotas["acct-b"] = usage{weekly: 90, fiveHour: 50}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "switched to backup") {
+		t.Fatalf("same-provider selection: out=%q err=%v", out, err)
+	}
+
+	quotas["acct-b"] = usage{weekly: 100, fiveHour: 50}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "switched to google [Antigravity]") {
+		t.Fatalf("Antigravity fallback: out=%q err=%v", out, err)
+	}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "keeping google") {
+		t.Fatalf("retain usable Antigravity account: out=%q err=%v", out, err)
+	}
+
+	t.Setenv("TEST_AGY_WEEKLY", "0")
+	quotas["acct-a"] = usage{weekly: 50, fiveHour: 50}
+	out = captureStdout(t, func() { err = handleAuto(p) })
+	if err != nil || !strings.Contains(out, "switched to primary [Codex]") {
+		t.Fatalf("Codex fallback: out=%q err=%v", out, err)
+	}
 }
 
 func TestAutoQuotaRemainingSingleWindows(t *testing.T) {
