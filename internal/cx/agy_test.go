@@ -274,7 +274,7 @@ func TestDashboardOpensAndFoldsSubscriptions(t *testing.T) {
 		v.results = append(v.results, UsageResult{Account: a})
 	}
 	frame, layout := renderDashboardFrame(v)
-	for _, want := range []string{"▾  Codex  Plus", "▾  Antigravity Pro", "▾  Codex Pro 100", "personal@example.com", "pro@example.com", "Tab subscription"} {
+	for _, want := range []string{"▾  Codex  Plus", "▾  Antigravity Pro", "▾  Codex Pro 100", "personal@example.com", "pro@example.com"} {
 		if !strings.Contains(plain(frame), want) {
 			t.Fatalf("missing %q in %q", want, frame)
 		}
@@ -554,7 +554,7 @@ func TestSingleSubscriptionDashboardIsFlat(t *testing.T) {
 		}
 		v.state.setActiveAccount(a)
 		frame, layout := renderDashboardFrame(v)
-		if strings.ContainsAny(frame, "▾▸") || strings.Contains(frame, "set default") || strings.Contains(frame, "fold/open") || strings.Contains(frame, "Tab subscription") {
+		if strings.ContainsAny(frame, "▾▸") || strings.Contains(frame, "set default") || strings.Contains(frame, "fold/unfold") {
 			t.Fatalf("unexpected subscription controls: %q", frame)
 		}
 		row := strings.Split(frame, "\n")[layout.headerRows[0]-1]

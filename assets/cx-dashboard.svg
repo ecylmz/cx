@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1258" height="348" viewBox="0 0 1258 348"
+<svg xmlns="http://www.w3.org/2000/svg" width="1248" height="348" viewBox="0 0 1248 348"
      role="img" aria-label="cx dashboard with aligned quota columns for Antigravity and Codex"
      font-family="'JetBrains Mono','JetBrainsMono Nerd Font','SF Mono',SFMono-Regular,ui-monospace,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace" font-size="16px" fill="#c9d1d9"
      style="font-variant-ligatures:none">
 <defs>
-  <clipPath id="card"><rect x="0" y="0" width="1202" height="292" rx="14"/></clipPath>
+  <clipPath id="card"><rect x="0" y="0" width="1192" height="292" rx="14"/></clipPath>
 </defs>
-<rect width="1258" height="348" rx="20" fill="#1c2128"/>
-<rect x="32" y="36" width="1202" height="292" rx="14" fill="#000000" opacity="0.24"/>
+<rect width="1248" height="348" rx="20" fill="#1c2128"/>
+<rect x="32" y="36" width="1192" height="292" rx="14" fill="#000000" opacity="0.24"/>
 <g transform="translate(28 28)">
-  <rect x="0" y="0" width="1202" height="292" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="0" y="0" width="1192" height="292" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
   <g clip-path="url(#card)">
-  <line x1="0" y1="34" x2="1202" y2="34" stroke="#30363d" stroke-width="1"/>
+  <line x1="0" y1="34" x2="1192" y2="34" stroke="#30363d" stroke-width="1"/>
   <circle cx="13.5" cy="17" r="5.5" fill="#ff5a54"/>
   <circle cx="32.5" cy="17" r="5.5" fill="#e6bf29"/>
   <circle cx="51.5" cy="17" r="5.5" fill="#52c12b"/>
@@ -46,9 +46,8 @@
   <text x="548" y="216.2" textLength="28.8">88%</text>
   <text x="596" y="216.2" textLength="9.6">↻</text>
   <text x="624.8" y="216.2" textLength="153.6">26.11.2026 13:39</text>
-  <text x="797.6" y="216.2" textLength="115.2" fill="#8b949e">─●┼──┼──●┼─┼</text>
-  <text x="932" y="216.2" textLength="57.6" fill="#8b949e">2 left</text>
-  <text x="1018.4" y="216.2" textLength="153.6" fill="#8b949e">25.11.2026 17:50</text>
+  <text x="797.6" y="216.2" textLength="57.6" fill="#8b949e">2 left</text>
+  <text x="884" y="216.2" textLength="230.4" fill="#8b949e">25.11.2026 17:50 · in 2d</text>
   <circle cx="63.2" cy="230.4" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
   <text x="77.6" y="235.4" textLength="48" font-weight="600">other</text>
   <text x="125.6" y="235.4" textLength="115.2" fill="#8b949e">@example.com</text>
@@ -57,14 +56,15 @@
   <text x="596" y="235.4" textLength="9.6" fill="#8b949e">↻</text>
   <text x="624.8" y="235.4" textLength="153.6" fill="#8b949e">27.11.2026 09:40</text>
   <text x="797.6" y="235.4" textLength="57.6" fill="#8b949e">0 left</text>
-  <text x="29.6" y="273.8" textLength="163.2" fill="#8b949e">↑/↓ or j/k select</text>
-  <text x="221.6" y="273.8" textLength="182.4" fill="#8b949e">enter open/activate</text>
-  <text x="432.8" y="273.8" textLength="134.4" fill="#8b949e">s subscription</text>
-  <text x="596" y="273.8" textLength="76.8" fill="#8b949e">m models</text>
-  <text x="701.6" y="273.8" textLength="153.6" fill="#8b949e">Tab subscription</text>
-  <text x="884" y="273.8" textLength="124.8" fill="#8b949e">←/→ fold/open</text>
-  <text x="1037.6" y="273.8" textLength="57.6" fill="#8b949e">? keys</text>
-  <text x="1124" y="273.8" textLength="57.6" fill="#8b949e">q quit</text>
+  <text x="29.6" y="273.8" textLength="96" fill="#8b949e">↑/↓ select</text>
+  <text x="154.4" y="273.8" textLength="144" fill="#8b949e">←/→ fold/unfold</text>
+  <text x="327.2" y="273.8" textLength="182.4" fill="#8b949e">enter open/activate</text>
+  <text x="538.4" y="273.8" textLength="86.4" fill="#8b949e">r refresh</text>
+  <text x="653.6" y="273.8" textLength="134.4" fill="#8b949e">s subscription</text>
+  <text x="816.8" y="273.8" textLength="76.8" fill="#8b949e">b banked</text>
+  <text x="922.4" y="273.8" textLength="76.8" fill="#8b949e">m models</text>
+  <text x="1028" y="273.8" textLength="57.6" fill="#8b949e">? keys</text>
+  <text x="1114.4" y="273.8" textLength="57.6" fill="#8b949e">q quit</text>
   </g>
 </g>
 </svg>

@@ -169,7 +169,7 @@ func TestFrameKeepsTheSelectedAccountOnScreen(t *testing.T) {
 		if !strings.Contains(frame, "more") {
 			t.Fatalf("sel=%d: a windowed list must say what it is hiding:\n%s", sel, frame)
 		}
-		if !strings.Contains(frame, "\n\n ↑/↓ or j/k select") {
+		if !strings.Contains(frame, "\n\n ↑/↓ select") {
 			t.Fatalf("sel=%d: the shortcuts need a blank line above them:\n%s", sel, frame)
 		}
 		if got := strings.Count(frame, "5 hour"); got != 1 {
@@ -337,6 +337,9 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 	frame, layout := renderDashboardFrame(v)
 	lines := strings.Split(plain(frame), "\n")
 	codexHeading, agyHeading := lines[layout.headerRows[0]-3], lines[layout.headerRows[2]-3]
+	if !strings.HasPrefix(lines[len(lines)-3], " ↑/↓ select   ←/→ fold/unfold   enter open/activate") {
+		t.Fatalf("the arrow shortcuts should start the footer:\n%s", frame)
+	}
 	if !strings.Contains(agyHeading, "Antigravity Pro") {
 		t.Fatalf("the second group should keep its subscription heading:\n%s", frame)
 	}
@@ -352,7 +355,7 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 		if !strings.Contains(codexHeading, label) || strings.Contains(agyHeading, label) {
 			t.Fatalf("%s should appear only in the first heading:\n%s", label, frame)
 		}
-		if got := strings.Count(frame, label); got != 1 {
+		if got := strings.Count(frame, bold(label)); got != 1 {
 			t.Fatalf("%s occurs %d times, want one heading for the table:\n%s", label, got, frame)
 		}
 	}
@@ -372,9 +375,8 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 		t.Fatalf("the email and model must align:\n%s\n%s", agyQuota, modelRow)
 	}
 	codexQuota := lines[layout.headerRows[0]-1]
-	if !strings.Contains(codexQuota, "1 left") || !strings.ContainsRune(codexQuota, '●') ||
-		cellIndex(codexQuota, bankedRule) != cellIndex(codexHeading, "banked") {
-		t.Fatalf("Codex banked timeline belongs in the banked column: %q", codexQuota)
+	if got, want := cellIndex(codexQuota, "1 left"), cellIndex(codexHeading, "banked"); got < 0 || got != want {
+		t.Fatalf("Codex banked count belongs in the banked column: %q", codexQuota)
 	}
 	for _, sample := range []struct{ row, value, heading string }{
 		{codexQuota, "9%", "5 hour"},
@@ -395,7 +397,7 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 	v.size.cols = 70
 	frame, layout = renderDashboardFrame(v)
 	codexQuota = strings.Split(plain(frame), "\n")[layout.headerRows[0]-1]
-	if !strings.Contains(codexQuota, "1 left") || strings.Contains(codexQuota, bankedRule) {
+	if !strings.Contains(codexQuota, "1 left") {
 		t.Fatalf("a narrow banked column should show the count: %q", codexQuota)
 	}
 }

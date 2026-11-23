@@ -84,7 +84,7 @@ Press `m` on an Antigravity account to show its other model groups below the acc
 
 Press `Tab` to move to the next subscription. After the last subscription, `Tab` returns to the first.
 
-Press `Enter` on an account to activate it for its provider. Press `←` to fold the focused group. The folded heading shows its active account. Press `→` or `Enter` to open the group.
+Press `Enter` on an account to activate it for its provider. Press `←` to fold the focused group. The folded heading shows its active account. Press `→` to unfold the group. You can also open it with `Enter`.
 
 Press `s` on an account to open its subscription menu. Select a tier and press `Enter` to save it in cx. Press `Esc` to cancel.
 
@@ -166,7 +166,7 @@ The dashboard and `cx status` start unused Codex quota windows with a minimal re
 
 ### Banked resets
 
-The `banked` column shows how many Codex resets remain. If there is room, it shows the earliest known expiry date and time. A wide terminal also shows a 30-day timeline. If any resets remain, press `b` for the full dates. `cx status` also lists them.
+The `banked` column shows how many Codex resets remain. If there is room, it shows the earliest known expiry and the time left. If any resets remain, press `b` for the full dates. `cx status` shows the dates and a 30-day timeline.
 
 ```
 banked  ─────┼●───┼────┼────┼─       1 left   next in 8d 23h

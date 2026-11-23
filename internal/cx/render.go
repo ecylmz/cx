@@ -349,22 +349,27 @@ type quotaColumns struct {
 
 const (
 	quotaColumnGap      = "  "
+	quotaWindowGap      = " "
 	quotaWindowMinWidth = len("5 hour")
+	quotaWindowMaxWidth = 36
 	bankedCountWidth    = len("99 left")
 	bankedMinDateWidth  = bankedCountWidth + len(quotaColumnGap) + len("01-02 15:04")
+	bankedCountdownMin  = len("   in 29d")
+	bankedCountdownMax  = len("   in 29d 23h")
+	bankedMaxWidth      = bankedCountWidth + len(quotaColumnGap) + len("2006-01-02 15:04") + bankedCountdownMax
 )
 
 func newQuotaColumns(cols, labelWidth int, bankedDates bool) quotaColumns {
 	if cols <= 0 {
 		cols = 136
 	}
-	gaps := 3 * len(quotaColumnGap)
-	bankedWidth := max(8, min(28, cols/5))
+	gaps := len(quotaColumnGap) + 2*len(quotaWindowGap)
+	bankedWidth := max(8, min(14, cols/5))
 	if bankedDates && cols/3+1 >= bankedMinDateWidth {
-		bankedWidth = min(50, cols/3+1)
+		bankedWidth = min(bankedMaxWidth, cols/3+1)
 	}
 	labelWidth = max(1, min(labelWidth, cols/3, cols-bankedWidth-gaps-2*quotaWindowMinWidth))
-	windowWidth := min(39, max(quotaWindowMinWidth, (cols-labelWidth-bankedWidth-gaps)/2))
+	windowWidth := min(quotaWindowMaxWidth, max(quotaWindowMinWidth, (cols-labelWidth-bankedWidth-gaps)/2))
 	return quotaColumns{labelWidth, windowWidth, bankedWidth}
 }
 
@@ -373,7 +378,7 @@ func (c quotaColumns) quotaCells(fiveHour, weekly, banked string) string {
 		s = fitCells(s, c.windowWidth)
 		return s + strings.Repeat(" ", max(0, c.windowWidth-visibleCells(s)))
 	}
-	return cell(fiveHour) + quotaColumnGap + cell(weekly) + quotaColumnGap + fitCells(banked, c.bankedWidth)
+	return cell(fiveHour) + quotaWindowGap + cell(weekly) + quotaWindowGap + fitCells(banked, c.bankedWidth)
 }
 
 func (c quotaColumns) heading(indent int, label string) []string {
@@ -489,23 +494,30 @@ func dashboardBankedSummary(r UsageResult, now time.Time, width int, dateLayout,
 		return count
 	}
 
-	if width < bankedCountWidth+len(quotaColumnGap)+len(dateLayout) {
+	room := width - bankedCountWidth - len(quotaColumnGap)
+	if room < len(shortDateLayout) {
+		return count
+	}
+	if visibleCells(count) > bankedCountWidth {
+		shortCount := strings.Replace(count, " left", "", 1)
+		if visibleCells(shortCount) > bankedCountWidth {
+			return count
+		}
+		count = shortCount
+	}
+	if room < len(dateLayout) || room < len(dateLayout)+bankedCountdownMax && room >= len(shortDateLayout)+bankedCountdownMin {
 		dateLayout = shortDateLayout
 	}
-	date := ""
-	summaryWidth := width
-	if room := width - len(quotaColumnGap) - len(dateLayout); room >= max(bankedCountWidth, visibleCells(count)) {
-		date = earliest.Local().Format(dateLayout)
-		summaryWidth = room
+	detail := earliest.Local().Format(dateLayout)
+	remaining := relativeDuration(earliest.Sub(now))
+	const lead = " · in "
+	if len(detail)+visibleCells(lead)+len(remaining) > room {
+		remaining, _, _ = strings.Cut(remaining, " ")
 	}
-	if axisWidth := summaryWidth - len(quotaColumnGap) - bankedCountWidth; axisWidth >= 12 && visibleCells(count) <= bankedCountWidth {
-		axis, _ := bankedAxis(resets, now, axisWidth)
-		count = axis + quotaColumnGap + count
+	if len(detail)+visibleCells(lead)+len(remaining) <= room {
+		detail += lead + remaining
 	}
-	if date != "" {
-		count += strings.Repeat(" ", summaryWidth-visibleCells(count)) + quotaColumnGap + dim(date)
-	}
-	return count
+	return padCell(count, bankedCountWidth) + quotaColumnGap + dim(detail)
 }
 
 func nextBankedExpiry(resets []BankedReset, now time.Time) time.Time {

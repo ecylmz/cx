@@ -908,7 +908,7 @@ type keyHint struct {
 // anyway. What survives always ends with the full key list and quit.
 func dashboardKeys(results []UsageResult, cols int, showDefaultHint bool) string {
 	hints := []keyHint{
-		{"↑/↓ or j/k select", 2},
+		{"↑/↓ select", 2},
 		{"enter switch", 1},
 		{"r refresh", 3},
 		{"s subscription", 2},
@@ -923,7 +923,7 @@ func dashboardKeys(results []UsageResult, cols int, showDefaultHint bool) string
 	}
 	if len(results) > 1 && results[0].Account.subscription() != results[len(results)-1].Account.subscription() {
 		hints[1].text = "enter open/activate"
-		hints = append(hints, keyHint{"Tab subscription", 1}, keyHint{"←/→ fold/open", 3})
+		hints = slices.Insert(hints, 1, keyHint{"←/→ fold/unfold", 3})
 		if showDefaultHint {
 			hints = append(hints, keyHint{"d set default", 1})
 		}
@@ -969,7 +969,7 @@ func renderHelpScreen(size termSize, banked, grouped, models bool) string {
 		keys[4][1] = "open a group or activate an account"
 		keys = append(keys,
 			[2]string{"Tab", "go to the next subscription"},
-			[2]string{"← / →", "fold / open the subscription group"},
+			[2]string{"← / →", "fold or unfold the subscription group"},
 			[2]string{"d", "set the subscription under the cursor as default"},
 		)
 	}

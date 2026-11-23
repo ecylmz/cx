@@ -159,7 +159,7 @@ func TestBankedDashboardLineStaysOneLine(t *testing.T) {
 	for i := 12; i > 0; i-- {
 		resets = append(resets, BankedReset{
 			ID:        fmt.Sprint(i),
-			ExpiresAt: now.Add(time.Duration(i) * 48 * time.Hour).Format(time.RFC3339),
+			ExpiresAt: now.Add(time.Duration(i)*48*time.Hour + 3*time.Hour + 15*time.Minute).Format(time.RFC3339),
 		})
 	}
 	v := layoutTestView(t, 2, 0, termSize{cols: 120})
@@ -172,9 +172,10 @@ func TestBankedDashboardLineStaysOneLine(t *testing.T) {
 	lines := strings.Split(frame, "\n")
 	line := lines[layout.headerRows[0]-1]
 	_, quotas, _ := strings.Cut(line, v.accounts[0].Email)
-	date := now.Add(48 * time.Hour).Local().Format(v.dateLayout)
-	if !strings.Contains(quotas, "12 left") || !strings.ContainsAny(quotas, "●◉") || !strings.Contains(quotas, date) {
-		t.Fatalf("expected the banked timeline, count, and first future expiry on the account row: %q", line)
+	expiry := now.Add(48*time.Hour + 3*time.Hour + 15*time.Minute).Local()
+	date := expiry.Format(v.dateLayout)
+	if !strings.Contains(quotas, "12 left") || !strings.Contains(quotas, date+" · in 2d 3h") {
+		t.Fatalf("expected the banked count, first future expiry, and countdown on the account row: %q", line)
 	}
 	if got, want := cellIndex(lines[layout.headerRows[1]-1], date), cellIndex(line, date); got != want {
 		t.Fatalf("the expiry dates should align across different counts:\n%s", frame)
@@ -182,7 +183,7 @@ func TestBankedDashboardLineStaysOneLine(t *testing.T) {
 	v.size.cols = 70
 	frame, layout = renderDashboardFrame(v)
 	line = strings.Split(frame, "\n")[layout.headerRows[0]-1]
-	if !strings.Contains(line, "12 left") || !strings.Contains(line, now.Add(48*time.Hour).Local().Format("01-02 15:04")) {
+	if !strings.Contains(line, "12 left") || !strings.Contains(line, expiry.Format("01-02 15:04")) {
 		t.Fatalf("expected the count and a shorter expiry date in a narrow terminal: %q", line)
 	}
 }
@@ -327,7 +328,7 @@ func TestBankedLineNamesUndatedResets(t *testing.T) {
 	}
 }
 
-func TestBankedSummaryShowsTimelineWhenItFits(t *testing.T) {
+func TestBankedSummaryShortensItsCountdownToFit(t *testing.T) {
 	oldColor := useColor
 	useColor = false
 	defer func() { useColor = oldColor }()
@@ -338,9 +339,18 @@ func TestBankedSummaryShowsTimelineWhenItFits(t *testing.T) {
 		{ID: "b", ExpiresAt: now.Add(20 * 24 * time.Hour).Format(time.RFC3339)},
 	}}
 	const full, short = "2006-01-02 15:04", "01-02 15:04"
-	date := now.Add(6*24*time.Hour + 15*time.Hour).Local().Format(full)
-	if wide, narrow := dashboardBankedSummary(r, now, 39, full, short), dashboardBankedSummary(r, now, 8, full, short); wide != "──●──┼──●──┼  2 left   "+date || narrow != "2 left" {
-		t.Fatalf("wide=%q narrow=%q", wide, narrow)
+	expiry := now.Add(6*24*time.Hour + 15*time.Hour).Local()
+	for _, sample := range []struct {
+		width int
+		want  string
+	}{
+		{38, "2 left   " + expiry.Format(full) + " · in 6d 15h"},
+		{29, "2 left   " + expiry.Format(short) + " · in 6d"},
+		{8, "2 left"},
+	} {
+		if got := dashboardBankedSummary(r, now, sample.width, full, short); got != sample.want {
+			t.Fatalf("width %d: got %q, want %q", sample.width, got, sample.want)
+		}
 	}
 }
 
@@ -358,7 +368,7 @@ func TestExpiredResetsLeaveTheWholeBankedLine(t *testing.T) {
 	r := UsageResult{BankedLoaded: true, BankedResets: []BankedReset{at(-2 * time.Hour), at(10 * 24 * time.Hour)}}
 
 	const full, short = "2006-01-02 15:04", "01-02 15:04"
-	if summary := dashboardBankedSummary(r, now, 39, full, short); !strings.Contains(summary, "  1 left") || strings.Count(summary, bankedPip) != 1 {
+	if summary := dashboardBankedSummary(r, now, 38, full, short); !strings.HasPrefix(summary, "1 left") || !strings.HasSuffix(summary, " · in 10d") {
 		t.Fatalf("expired reset should be off the count: %q", summary)
 	}
 	if lines := bankedStatusLines(r, "  "); len(lines) != 2 || strings.Count(lines[0], bankedPip) != 1 {

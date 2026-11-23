@@ -205,13 +205,13 @@ func main() {
 	row = c.draw(row+2, account{
 		email: "you@example.com", live: true, selected: true,
 		fiveHour: "9%   ↻  23.11.2026 17:50", weekly: "88%  ↻  26.11.2026 13:39",
-		banked: "─●┼──┼──●┼─┼  2 left   25.11.2026 17:50",
+		banked: "2 left   25.11.2026 17:50 · in 2d",
 	})
 	row = c.draw(row, account{
 		email:    "other@example.com",
 		fiveHour: "Starts after reset", weekly: "0%   ↻  27.11.2026 09:40", banked: "0 left",
 	})
-	c.text(row+1, 1, "↑/↓ or j/k select   enter open/activate   s subscription   m models   Tab subscription   ←/→ fold/open   ? keys   q quit", dim, false)
+	c.text(row+1, 1, "↑/↓ select   ←/→ fold/unfold   enter open/activate   r refresh   s subscription   b banked   m models   ? keys   q quit", dim, false)
 	rows := row + 2
 
 	// Rounded to whole pixels: the card is the one edge a reader sees against the
