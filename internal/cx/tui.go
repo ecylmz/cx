@@ -608,6 +608,9 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 				} else {
 					prefix = append(prefix, label)
 				}
+				if grouped {
+					prefix = append(prefix, "")
+				}
 			}
 		}
 		headings[i] = len(prefix)
@@ -639,14 +642,14 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 			// Mid-group, the shared headings may need a line of their own.
 			headerRows := 1
 			if grouped {
-				headerRows = 2
+				headerRows = 3
 			}
 			start, end = blockWindow(blocks, selected, avail-headerRows)
 		}
 		if quotaHeadingAt >= 0 && start > quotaHeadingAt {
 			if !v.groupStart(visible[start]) && grouped {
 				label := v.subscriptionHeading(v.accounts[visible[start]].subscription(), "▾")
-				repeated = columns.heading(v.quotaIndent(), label)
+				repeated = append(columns.heading(v.quotaIndent(), label), "")
 			} else if slices.ContainsFunc(visible[start:end], func(index int) bool {
 				return !v.folded(v.accounts[index].subscription())
 			}) {
@@ -737,7 +740,7 @@ func dashboardTitle(v dashboardView) string {
 		label := "no active account"
 		for _, a := range v.accounts {
 			if a.ID == v.state.activeAccountID(a.provider()) {
-				label = dashboardEmail(a.Email, false)
+				label = styledAccountLabel(dashboardAccountLabel(a), false)
 				break
 			}
 		}
@@ -762,7 +765,7 @@ func dashboardBlock(v dashboardView, i int, columns quotaColumns) []string {
 	count := 0
 	for j := i; j < len(v.accounts) && v.accounts[j].subscription() == a.subscription(); j++ {
 		if v.accounts[j].ID == activeID {
-			active = v.accounts[j].Email
+			active = dashboardAccountLabel(v.accounts[j])
 		}
 		count++
 	}
@@ -772,7 +775,7 @@ func dashboardBlock(v dashboardView, i int, columns quotaColumns) []string {
 	}
 	line := v.subscriptionHeading(a.subscription(), "▸")
 	if active != "" {
-		line += " · " + dashboardEmail(active, false)
+		line += " · " + styledAccountLabel(active, false)
 	}
 	line += fmt.Sprintf(" · %d %s", count, noun)
 	return []string{line}
@@ -810,7 +813,7 @@ func (v dashboardView) quotaIndent() int {
 func (v dashboardView) quotaColumns() quotaColumns {
 	width := 0
 	for _, a := range v.accounts {
-		width = max(width, visibleCells(a.Email))
+		width = max(width, visibleCells(dashboardAccountLabel(a)))
 	}
 	for _, r := range v.results {
 		for _, group := range r.QuotaGroups {
@@ -839,7 +842,7 @@ func accountBlock(v dashboardView, i int, columns quotaColumns) []string {
 	if !active {
 		quota = neutralLine(quota, !selected)
 	}
-	labelWidth := columns.labelWidth + 2 // account marker and the space before the email
+	labelWidth := columns.labelWidth + 2 // account marker and the space before the label
 	header := fitCells(dashboardAccountHeader(v.state, r.Account, selected), labelWidth)
 	header += strings.Repeat(" ", labelWidth-visibleCells(header)) + quotaColumnGap + quota
 	lines = append([]string{padding + gutter(selected, 2) + header}, lines...)
@@ -1015,7 +1018,7 @@ func renderSubscriptionMenu(v dashboardView) string {
 		}
 		rows = append(rows, gutter(selected, 4)+marker+" "+label)
 	}
-	return overlayFrame(" "+bold(account.provider().label())+"  subscription · "+dashboardEmail(account.Email, false), rows, v.size, spacing, "↑/↓ choose · enter save · esc cancel")
+	return overlayFrame(" "+bold(account.provider().label())+"  subscription · "+styledAccountLabel(dashboardAccountLabel(account), false), rows, v.size, spacing, "↑/↓ choose · enter save · esc cancel")
 }
 
 // overlayFit reports how many listing rows an overlay screen can show and
@@ -1077,13 +1080,13 @@ func renderBankedScreen(v dashboardView) string {
 
 	now := time.Now()
 	rows := make([]row, 0, len(v.results)*2)
-	emailWidth := v.quotaColumns().labelWidth
+	labelWidth := v.quotaColumns().labelWidth
 	for i, r := range v.results {
 		if r.Account.provider() != providerCodex {
 			continue
 		}
-		email := fitCells(dashboardEmail(r.Account.Email, i == v.sel), emailWidth)
-		head := "   " + email + strings.Repeat(" ", emailWidth-visibleCells(email)) + quotaColumnGap
+		label := fitCells(styledAccountLabel(dashboardAccountLabel(r.Account), i == v.sel), labelWidth)
+		head := "   " + label + strings.Repeat(" ", labelWidth-visibleCells(label)) + quotaColumnGap
 		switch {
 		case r.BankedErr != "":
 			rows = append(rows, row{text: head + yellow("unavailable") + " · " + dim(r.BankedErr)})
@@ -1142,22 +1145,26 @@ func gutter(selected bool, width int) string {
 }
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
-	email := dashboardEmail(a.Email, selected)
+	label := styledAccountLabel(dashboardAccountLabel(a), selected)
 	if selected {
-		return "  " + email
+		return "  " + label
 	}
 	active := dim("○")
 	if a.ID == st.activeAccountID(a.provider()) {
 		active = green("●")
 	}
-	return active + " " + email
+	return active + " " + label
 }
 
-func dashboardEmail(email string, selected bool) string {
-	if email == "" {
+func dashboardAccountLabel(a Account) string {
+	return cmp.Or(a.Email, a.Name)
+}
+
+func styledAccountLabel(label string, selected bool) string {
+	if label == "" {
 		return dim("—")
 	}
-	local, domain, hasDomain := strings.Cut(email, "@")
+	local, domain, hasDomain := strings.Cut(label, "@")
 	name := bold(local)
 	if selected {
 		name = cyan(name)

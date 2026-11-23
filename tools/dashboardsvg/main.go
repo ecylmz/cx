@@ -192,7 +192,7 @@ func main() {
 	c.text(row, 4, "Antigravity", fg, true)
 	c.text(row, 16, "Pro", dim, false)
 	c.headers(row)
-	row = c.draw(row+1, account{
+	row = c.draw(row+2, account{
 		email: "work@example.com", live: true,
 		fiveHour: "78%  ↻  23.11.2026 15:20", weekly: "92%  ↻  27.11.2026 10:00", banked: "—",
 	})
@@ -202,7 +202,7 @@ func main() {
 	c.rect(x(3), yTop(row)+2, 7*cellW, cellH-4, fg)
 	c.text(row, 4, "Codex", surface, true)
 	c.text(row, 11, "Plus · default", dim, false)
-	row = c.draw(row+1, account{
+	row = c.draw(row+2, account{
 		email: "you@example.com", live: true, selected: true,
 		fiveHour: "9%   ↻  23.11.2026 17:50", weekly: "88%  ↻  26.11.2026 13:39",
 		banked: "─●┼──┼──●┼─┼  2 left   25.11.2026 17:50",

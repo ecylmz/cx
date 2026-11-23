@@ -326,7 +326,7 @@ func TestDashboardOpensAndFoldsSubscriptions(t *testing.T) {
 	}
 	rows := strings.Split(frame, "\n")
 	accountRow := layout.headerRows[v.sel] - 1
-	labelColumn := cellIndex(rows[accountRow-1], "Antigravity")
+	labelColumn := cellIndex(rows[accountRow-2], "Antigravity")
 	if cursorColumn := cellIndex(rows[accountRow], "▌"); labelColumn < 0 || cursorColumn != labelColumn-1 {
 		t.Fatalf("heading label column=%d, expanded cursor column=%d", labelColumn, cursorColumn)
 	}

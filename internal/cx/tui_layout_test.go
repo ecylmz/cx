@@ -336,7 +336,7 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 
 	frame, layout := renderDashboardFrame(v)
 	lines := strings.Split(plain(frame), "\n")
-	codexHeading, agyHeading := lines[layout.headerRows[0]-2], lines[layout.headerRows[2]-2]
+	codexHeading, agyHeading := lines[layout.headerRows[0]-3], lines[layout.headerRows[2]-3]
 	if !strings.Contains(agyHeading, "Antigravity Pro") {
 		t.Fatalf("the second group should keep its subscription heading:\n%s", frame)
 	}
@@ -361,8 +361,11 @@ func TestDashboardAlignsQuotaColumnsAcrossSubscriptions(t *testing.T) {
 			t.Fatalf("account row missing email:\n%s", frame)
 		}
 	}
-	if layout.headerRows[1]-layout.headerRows[0] != 1 || layout.headerRows[2]-layout.headerRows[1] != 3 || lines[layout.headerRows[1]] != "" {
+	if layout.headerRows[1]-layout.headerRows[0] != 1 || layout.headerRows[2]-layout.headerRows[1] != 4 || lines[layout.headerRows[1]] != "" {
 		t.Fatalf("expected one blank line between groups and consecutive rows within a group:\n%s", frame)
+	}
+	if lines[layout.headerRows[0]-2] != "" || lines[layout.headerRows[2]-2] != "" {
+		t.Fatalf("each open group heading should be followed by a blank line:\n%s", frame)
 	}
 	agyQuota, modelRow := lines[layout.headerRows[2]-1], lines[layout.headerRows[2]]
 	if got, want := cellIndex(modelRow, "Claude and GPT models"), cellIndex(agyQuota, agy.Email); got < 0 || got != want {
@@ -680,6 +683,25 @@ func TestDashboardAlignsSelectedAndUnselectedQuotaRows(t *testing.T) {
 		}
 		if !strings.HasPrefix(rows[layout.headerRows[v.sel]-1], " ▌") {
 			t.Fatalf("missing selection cursor:\n%s", frame)
+		}
+	}
+}
+
+func TestDashboardAlignsAccountNamesWhenEmailIsMissing(t *testing.T) {
+	v := layoutTestView(t, 2, 0, termSize{rows: 40, cols: 100})
+	v.accounts[0].Email = ""
+	v.accounts[1].Email = ""
+	v.accounts[1].Name = "long-managed-account-name"
+	for i, a := range v.accounts {
+		v.results[i].Account = a
+	}
+	frame, layout := renderDashboardFrame(v)
+	rows := strings.Split(plain(frame), "\n")
+	col := cellIndex(rows[layout.headerRows[0]-2], "weekly")
+	for i, a := range v.accounts {
+		line := rows[layout.headerRows[i]-1]
+		if !strings.Contains(line, a.Name) || col < 0 || cellIndex(line, "90%") != col {
+			t.Fatalf("account name and quota must fit in their columns:\n%s", frame)
 		}
 	}
 }
