@@ -21,12 +21,6 @@ var (
 )
 
 type directUsagePayload struct {
-	PlanType             string                      `json:"plan_type"`
-	RateLimit            *directRateLimit            `json:"rate_limit"`
-	AdditionalRateLimits []directAdditionalRateLimit `json:"additional_rate_limits"`
-}
-
-type directAdditionalRateLimit struct {
 	RateLimit *directRateLimit `json:"rate_limit"`
 }
 
@@ -39,11 +33,6 @@ type directRateWindow struct {
 	UsedPercent        float64 `json:"used_percent"`
 	LimitWindowSeconds int64   `json:"limit_window_seconds"`
 	ResetAt            int64   `json:"reset_at"`
-}
-
-func fetchUsageDirect(p paths, a Account) (WeeklyUsage, error) {
-	_, weekly, err := fetchUsagePairDirect(p, &a)
-	return weekly, err
 }
 
 // backendGet performs one authenticated GET against a ChatGPT backend endpoint
@@ -101,9 +90,6 @@ func fetchUsagePairDirect(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error
 	var payload directUsagePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, WeeklyUsage{}, fmt.Errorf("decode usage response: %w", err)
-	}
-	if err := rememberAccountPlan(p, a, payload.PlanType); err != nil {
-		return nil, WeeklyUsage{}, err
 	}
 	fiveHourWindow, weeklyWindow, err := selectDirectCodexWindows(payload)
 	if err != nil {
@@ -201,29 +187,6 @@ func directUsageCredentials(p paths, a Account) (string, string, error) {
 		return "", "", errors.New("could not determine ChatGPT account_id")
 	}
 	return strings.TrimSpace(auth.Tokens.AccessToken), accountID, nil
-}
-
-func selectDirectWeeklyWindow(payload directUsagePayload) (*directRateWindow, error) {
-	var windows []*directRateWindow
-	add := func(limit *directRateLimit) {
-		if limit == nil {
-			return
-		}
-		if limit.PrimaryWindow != nil {
-			windows = append(windows, limit.PrimaryWindow)
-		}
-		if limit.SecondaryWindow != nil {
-			windows = append(windows, limit.SecondaryWindow)
-		}
-	}
-	add(payload.RateLimit)
-	for i := range payload.AdditionalRateLimits {
-		add(payload.AdditionalRateLimits[i].RateLimit)
-	}
-	if len(windows) == 0 {
-		return nil, errors.New("usage endpoint returned no rate-limit window")
-	}
-	return slices.MaxFunc(windows, byWindowSeconds), nil
 }
 
 // byWindowSeconds orders rate-limit windows from the shortest to the longest

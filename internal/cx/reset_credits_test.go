@@ -115,7 +115,7 @@ IFS= read -r initialized
 IFS= read -r request
 echo '{"id":2,"error":{"code":-32603,"message":"failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized"}}'
 `
-	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -148,30 +148,43 @@ func TestBankedDetailRowShowsExpiry(t *testing.T) {
 	}
 }
 
-// The dashboard spends one line on banked resets however many there are; the
-// dates behind it belong to `cx status` and the `b` screen.
+// The banked count fits in the quota row even with many resets.
 func TestBankedDashboardLineStaysOneLine(t *testing.T) {
 	oldColor := useColor
 	useColor = false
 	defer func() { useColor = oldColor }()
 
 	now := time.Now()
-	resets := make([]BankedReset, 0, 12)
-	for i := range 12 {
+	resets := []BankedReset{{ID: "expired", ExpiresAt: now.Add(-time.Hour).Format(time.RFC3339)}}
+	for i := 12; i > 0; i-- {
 		resets = append(resets, BankedReset{
 			ID:        fmt.Sprint(i),
-			ExpiresAt: now.Add(time.Duration(i+1) * 48 * time.Hour).Format(time.RFC3339),
+			ExpiresAt: now.Add(time.Duration(i)*48*time.Hour + 3*time.Hour + 15*time.Minute).Format(time.RFC3339),
 		})
 	}
-	lines := bankedResetLines(UsageResult{BankedLoaded: true, BankedResets: resets}, "  ")
-	if len(lines) != 1 {
-		t.Fatalf("dashboard should spend one line, got %d: %q", len(lines), lines)
+	v := layoutTestView(t, 2, 0, termSize{cols: 120})
+	v.dateLayout = "2006-01-02 15:04"
+	v.results[0].BankedLoaded = true
+	v.results[0].BankedResets = resets
+	v.results[1].BankedLoaded = true
+	v.results[1].BankedResets = resets[len(resets)-1:]
+	frame, layout := renderDashboardFrame(v)
+	lines := strings.Split(frame, "\n")
+	line := lines[layout.headerRows[0]-1]
+	_, quotas, _ := strings.Cut(line, v.accounts[0].Email)
+	expiry := now.Add(48*time.Hour + 3*time.Hour + 15*time.Minute).Local()
+	date := expiry.Format(v.dateLayout)
+	if !strings.Contains(quotas, "12 left") || !strings.Contains(quotas, date+" · in 2d 3h") {
+		t.Fatalf("expected the banked count, first future expiry, and countdown on the account row: %q", line)
 	}
-	if !strings.Contains(lines[0], "banked") || !strings.Contains(lines[0], "12 left") {
-		t.Fatalf("line=%q", lines[0])
+	if got, want := cellIndex(lines[layout.headerRows[1]-1], date), cellIndex(line, date); got != want {
+		t.Fatalf("the expiry dates should align across different counts:\n%s", frame)
 	}
-	if strings.Contains(lines[0], "Reset") {
-		t.Fatalf("the per-reset title should not be repeated: %q", lines[0])
+	v.size.cols = 70
+	frame, layout = renderDashboardFrame(v)
+	line = strings.Split(frame, "\n")[layout.headerRows[0]-1]
+	if !strings.Contains(line, "12 left") || !strings.Contains(line, expiry.Format("01-02 15:04")) {
+		t.Fatalf("expected the count and a shorter expiry date in a narrow terminal: %q", line)
 	}
 }
 
@@ -283,13 +296,13 @@ func TestBankedCountdownSkipsResetsAlreadyGone(t *testing.T) {
 	at := func(d time.Duration) BankedReset {
 		return BankedReset{ID: d.String(), ExpiresAt: now.Add(d).Format(time.RFC3339)}
 	}
-	if got := bankedCountdown([]BankedReset{at(-2 * time.Hour), at(10 * 24 * time.Hour)}, now, false); got != "next in 10d" {
+	if got := bankedCountdown([]BankedReset{at(-2 * time.Hour), at(10 * 24 * time.Hour)}, now); got != "next in 10d" {
 		t.Fatalf("countdown should name the next live reset, got %q", got)
 	}
-	if got := bankedCountdown([]BankedReset{at(-2 * time.Hour), at(-time.Minute)}, now, false); got != "expired" {
+	if got := bankedCountdown([]BankedReset{at(-2 * time.Hour), at(-time.Minute)}, now); got != "expired" {
 		t.Fatalf("with nothing left in the future the line should say so, got %q", got)
 	}
-	if got := bankedCountdown(nil, now, false); got != "" {
+	if got := bankedCountdown(nil, now); got != "" {
 		t.Fatalf("no resets, no countdown: %q", got)
 	}
 }
@@ -306,106 +319,64 @@ func TestBankedLineNamesUndatedResets(t *testing.T) {
 		{ID: "a", ExpiresAt: now.Add(9 * 24 * time.Hour).Format(time.RFC3339)},
 		{ID: "b"},
 	}
-	line := bankedLine(resets, now, defaultBarCells, false)
+	line := bankedLine(resets, now, defaultBarCells)
 	if !strings.Contains(line, "2 left · 1?") {
 		t.Fatalf("line=%q", line)
 	}
-	// The count sits in a fixed cell, so it survives the trim at a width that
-	// leaves no room for a trailing note at all. The countdown does not.
-	const cols = 40
-	narrow := bankedResetLinesWidth(UsageResult{BankedLoaded: true, BankedResets: resets}, "   ", cols)
-	if len(narrow) != 1 {
-		t.Fatalf("expected one banked line, got %d", len(narrow))
-	}
-	trimmed := fitCells(narrow[0], cols)
-	if !strings.Contains(trimmed, "2 left · 1?") || strings.Contains(trimmed, "next in") {
-		t.Fatalf("narrow line=%q", trimmed)
+	if narrow := dashboardBankedSummary(UsageResult{BankedLoaded: true, BankedResets: resets}, now, 8, "2006-01-02 15:04", "01-02 15:04"); narrow != "2 · 1?" {
+		t.Fatalf("narrow banked count=%q", narrow)
 	}
 }
 
-// How long the next reset has left is what the line is read for, so it survives
-// every width — shortened on a narrow terminal, never dropped.
-func TestBankedLineAlwaysKeepsTheCountdown(t *testing.T) {
+func TestBankedSummaryShortensItsCountdownToFit(t *testing.T) {
 	oldColor := useColor
 	useColor = false
 	defer func() { useColor = oldColor }()
 
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	r := UsageResult{BankedLoaded: true, BankedResets: []BankedReset{
 		{ID: "a", ExpiresAt: now.Add(6*24*time.Hour + 15*time.Hour).Format(time.RFC3339)},
 		{ID: "b", ExpiresAt: now.Add(20 * 24 * time.Hour).Format(time.RFC3339)},
 	}}
-	for _, cols := range []int{40, 60, 79, 100, 0} {
-		lines := bankedResetLinesWidth(r, "   ", cols)
-		if len(lines) != 1 {
-			t.Fatalf("cols=%d lines=%q", cols, lines)
+	const full, short = "2006-01-02 15:04", "01-02 15:04"
+	expiry := now.Add(6*24*time.Hour + 15*time.Hour).Local()
+	for _, sample := range []struct {
+		width int
+		want  string
+	}{
+		{38, "2 left   " + expiry.Format(full) + " · in 6d 15h"},
+		{29, "2 left   " + expiry.Format(short) + " · in 6d"},
+		{8, "2 left"},
+	} {
+		if got := dashboardBankedSummary(r, now, sample.width, full, short); got != sample.want {
+			t.Fatalf("width %d: got %q, want %q", sample.width, got, sample.want)
 		}
-		if !strings.Contains(lines[0], "6d") {
-			t.Fatalf("cols=%d: the countdown to the next reset went missing: %q", cols, lines[0])
-		}
-		// Below compactBelowCols the whole block runs past the margin — the quota
-		// meters included — so only the widths the rest of the block fits in are
-		// held to fitting here.
-		if cols >= compactBelowCols {
-			if got := visibleCells(lines[0]); got > cols {
-				t.Fatalf("cols=%d: line is %d cells and would be cut: %q", cols, got, lines[0])
-			}
-		}
-	}
-
-	// The narrow form spends its room on the number, not on the word.
-	wide := bankedLine(r.BankedResets, now, defaultBarCells, false)
-	narrow := bankedLine(r.BankedResets, now, defaultBarCells, true)
-	if !strings.Contains(wide, "next in 6d") {
-		t.Fatalf("wide=%q", wide)
-	}
-	if strings.Contains(narrow, "next") || !strings.Contains(narrow, "in 6d") {
-		t.Fatalf("narrow=%q", narrow)
-	}
-	if visibleCells(narrow) >= visibleCells(wide) {
-		t.Fatalf("the narrow form should be shorter: %d vs %d", visibleCells(narrow), visibleCells(wide))
 	}
 }
 
 // A reset whose expiry has passed is gone: the dashboard's ticker keeps redrawing
-// with a fresh clock between fetches, and the pips, the count and the countdown
-// all have to agree about that rather than one of them still claiming it.
+// with a fresh clock between fetches, and the pips and count show the same resets.
 func TestExpiredResetsLeaveTheWholeBankedLine(t *testing.T) {
 	oldColor := useColor
 	useColor = false
 	defer func() { useColor = oldColor }()
 
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	at := func(d time.Duration) BankedReset {
 		return BankedReset{ID: d.String(), ExpiresAt: now.Add(d).Format(time.RFC3339)}
 	}
 	r := UsageResult{BankedLoaded: true, BankedResets: []BankedReset{at(-2 * time.Hour), at(10 * 24 * time.Hour)}}
 
-	lines := bankedResetLinesWidth(r, "   ", 100)
-	if len(lines) != 1 {
-		t.Fatalf("lines=%q", lines)
+	const full, short = "2006-01-02 15:04", "01-02 15:04"
+	if summary := dashboardBankedSummary(r, now, 38, full, short); !strings.HasPrefix(summary, "1 left") || !strings.HasSuffix(summary, " · in 10d") {
+		t.Fatalf("expired reset should be off the count: %q", summary)
 	}
-	if !strings.Contains(lines[0], "1 left") || !strings.Contains(lines[0], "next in 9d") {
-		t.Fatalf("the gone reset should be off the count: %q", lines[0])
+	if lines := bankedStatusLines(r, "  "); len(lines) != 2 || strings.Count(lines[0], bankedPip) != 1 {
+		t.Fatalf("status should list the axis and the one live reset: %q", lines)
 	}
-	if n := strings.Count(lines[0], bankedPip); n != 1 {
-		t.Fatalf("want one pip for the one reset left, got %d: %q", n, lines[0])
-	}
-	// Cell 0 is where an expired reset used to land, drawn in the same red as one
-	// about to go.
-	if strings.HasPrefix(strings.TrimPrefix(lines[0], "   banked  "), bankedPip) {
-		t.Fatalf("a gone reset should not still sit at the head of the axis: %q", lines[0])
-	}
-
-	// The full listing under it agrees, and so does the status block.
-	if got := len(bankedStatusLines(r, "  ")); got != 2 {
-		t.Fatalf("status should list the axis and the one live reset, got %d lines", got)
-	}
-
-	// With nothing left the line goes altogether, like an account that never had any.
 	gone := UsageResult{BankedLoaded: true, BankedResets: []BankedReset{at(-2 * time.Hour)}}
-	if lines := bankedResetLinesWidth(gone, "   ", 100); len(lines) != 0 {
-		t.Fatalf("nothing left should render nothing: %q", lines)
+	if summary := dashboardBankedSummary(gone, now, 12, full, short); summary != "0 left" {
+		t.Fatalf("expired resets should count as zero: %q", summary)
 	}
 	if lines := bankedStatusLines(gone, "  "); len(lines) != 0 {
 		t.Fatalf("nothing left should render nothing in status: %q", lines)

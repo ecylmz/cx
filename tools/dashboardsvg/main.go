@@ -1,19 +1,7 @@
 // Command dashboardsvg draws the dashboard picture the README shows.
 //
-// The screenshot cannot be a real capture: it has to show several accounts with
-// quotas and banked resets that nobody's account happens to hold, and it has to
-// keep showing them after those windows would have reset. So it is drawn here
-// from the same layout constants the TUI lays its columns out with, and the
-// result is checked in as assets/cx-dashboard.svg.
-//
-// Nothing in it is drawn with a block glyph. A terminal has one font and square
-// cells, so ██ and ░░ tile into a meter; a README is read in whatever browser
-// and whatever font the reader has, and there the same glyphs came out as a
-// dotted rash with gaps between the cells. Every meter, the cursor bar, the
-// banked axis and the account markers are therefore rectangles, lines and
-// circles, and the text that is left is pinned to its terminal column with
-// textLength — so a reader missing every font we ask for gets different
-// letterforms but the same columns.
+// The preview uses sample accounts and fixed reset times. Text sits on a
+// terminal cell grid, and shapes mark the active account and selected block.
 //
 // Regenerate with: make assets
 package main
@@ -33,7 +21,6 @@ const (
 	cellH    = 19.2
 	fontSize = 16.0
 	baseline = 14.6 // from the top of the cell
-	barH     = 15.5 // a meter is a touch shorter than its cell, so stacked bars keep a hairline between them
 )
 
 // The card, and the plate it sits on.
@@ -48,32 +35,22 @@ const (
 // The palette is GitHub's dark theme rather than any one terminal's: the picture
 // is read on a GitHub page, next to that page's own greys.
 const (
-	fg     = "#c9d1d9"
-	dim    = "#8b949e"
-	green  = "#3fb950"
-	yellow = "#d29922"
-	red    = "#f85149"
-	blue   = "#58a6ff"
-	// track is the dimmed half of a meter. A terminal draws it as ░ — a quarter
-	// of the foreground, dithered — and this is that mix as a flat tint.
-	track = "#39414b"
+	fg      = "#c9d1d9"
+	dim     = "#8b949e"
+	green   = "#3fb950"
+	blue    = "#58a6ff"
+	surface = "#0d1117"
 )
 
 const fontStack = "'JetBrains Mono','JetBrainsMono Nerd Font','SF Mono',SFMono-Regular," +
 	"ui-monospace,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace"
 
-// The columns of a dashboard line, from internal/cx: the account header cells in
-// dashboardAccountHeader, and the meter cells in labeledUsageLine — a three-cell
-// indent, a six-cell label, and the two spaces before the bar.
+// Columns in the grouped dashboard at 120 cells wide.
 const (
-	labelCol = 3
-	barCol   = 11
-	valueCol = 35
-	tailCol  = 49
-	nameCol  = 4
-	planCol  = 23
-	mailCol  = 34
-	barCells = 22 // defaultBarCells
+	labelCol    = 6
+	fiveHourCol = 29
+	weeklyCol   = 55
+	bankedCol   = 81
 )
 
 type canvas struct {
@@ -151,176 +128,93 @@ func (c *canvas) run(row, col int, s, fill string, bold bool) {
 	fmt.Fprintf(&c.b, ">%s</text>\n", escape(s))
 }
 
-// bar is a quota meter: the filled cells and the dimmed track behind them, in
-// the same proportion barCells rounds a percentage to.
-func (c *canvas) bar(row, col int, percent float64) {
-	n := int(clamp(percent, 0, 100)/100*barCells + 0.5)
-	y := yTop(row) + (cellH-barH)/2
-	if n > 0 {
-		c.rect(x(col), y, float64(n)*cellW, barH, fg)
-	}
-	if n < barCells {
-		c.rect(x(col+n), y, float64(barCells-n)*cellW, barH, track)
-	}
-	c.reach(col + barCells)
-}
-
 func (c *canvas) rect(px, py, w, h float64, fill string) {
 	fmt.Fprintf(&c.b, "  <rect x=%q y=%q width=%q height=%q fill=%q shape-rendering=\"crispEdges\"/>\n",
 		f(px), f(py), f(w), f(h), fill)
 }
 
-// pip is one banked reset on the axis, in the column bankedColumn puts it in and
-// the colour bankedPipStyle gives it.
-type pip struct {
-	col  int
-	fill string
-}
-
-// axis draws the banked line: the 30-day rule, a tick on each week boundary, and
-// a dot per reset. Drawn as one rule rather than a cell of ─ each, so the axis
-// cannot come out dashed on a reader whose font sets that glyph short.
-func (c *canvas) axis(row, col int, ticks []int, pips []pip) {
-	mid := yTop(row) + cellH/2
-	fmt.Fprintf(&c.b, "  <line x1=%q y1=%q x2=%q y2=%q stroke=%q stroke-width=\"1.1\"/>\n",
-		f(x(col)), f(mid), f(x(col+barCells)), f(mid), dim)
-	for _, t := range ticks {
-		cx := x(col+t) + cellW/2
-		fmt.Fprintf(&c.b, "  <line x1=%q y1=%q x2=%q y2=%q stroke=%q stroke-width=\"1.1\"/>\n",
-			f(cx), f(mid-5.2), f(cx), f(mid+5.2), dim)
-	}
-	for _, p := range pips {
-		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.5\" fill=%q/>\n",
-			f(x(col+p.col)+cellW/2), f(mid), p.fill)
-	}
-	c.reach(col + barCells)
-}
-
 // marker is the ●/○ in front of an account name: filled for the live account.
-func (c *canvas) marker(row, col int, live bool) {
+func (c *canvas) marker(row, col int, live bool, outline string) {
 	cx, cy := x(col)+cellW/2, yTop(row)+cellH/2
 	if live {
 		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.6\" fill=%q/>\n", f(cx), f(cy), green)
 	} else {
 		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.1\" fill=\"none\" stroke=%q stroke-width=\"1.3\"/>\n",
-			f(cx), f(cy), dim)
+			f(cx), f(cy), outline)
 	}
 	c.reach(col + 1)
 }
 
-// gutter is the selection cursor. The TUI repeats ▌ down the block; here it is
-// one rectangle, so it reads as the single unbroken bar it is meant to be
-// instead of a stack of glyphs with the line gaps showing through.
-func (c *canvas) gutter(row, rows int) {
-	c.rect(x(1), yTop(row)+2, cellW/2, float64(rows)*cellH-4, blue)
-}
-
-type meter struct {
-	label string
-	left  float64
-	tail  string
-}
-
-type banked struct {
-	ticks []int
-	pips  []pip
-	count string
-	tail  string
-}
-
 type account struct {
-	name, plan, email string
-	live, selected    bool
-	meters            []meter
-	banked            *banked
+	email, fiveHour, weekly, banked string
+	live, selected                  bool
 }
 
-// draw lays out one account block and returns the row the next one starts on,
-// the blank line between blocks included.
+// draw returns the first row of the next account block.
 func (c *canvas) draw(row int, a account) int {
-	rows := 1 + len(a.meters)
-	if a.banked != nil {
-		rows++
-	}
 	if a.selected {
-		c.gutter(row, rows)
+		c.rect(x(3), yTop(row)+2, cellW/2, cellH-4, blue)
+	} else {
+		c.marker(row, 4, a.live, dim)
 	}
-	c.marker(row, 2, a.live)
-	name := fg
-	if a.selected {
-		name = blue // the cursor colour, so the selection reads even where the bar is faint
+	local, domain, _ := strings.Cut(a.email, "@")
+	color := fg
+	if a.live {
+		color = green
+	} else if a.selected {
+		color = blue
 	}
-	c.text(row, nameCol, a.name, name, true)
-	c.text(row, planCol, a.plan, fg, false)
-	c.text(row, mailCol, a.email, dim, false)
-	row++
-	for _, m := range a.meters {
-		c.text(row, labelCol, m.label, fg, false)
-		c.bar(row, barCol, m.left)
-		c.text(row, valueCol, fmt.Sprintf("%5.1f%% left", m.left), quotaColor(m.left), false)
-		c.text(row, tailCol, m.tail, dim, false)
-		row++
+	c.text(row, labelCol, local, color, true)
+	c.text(row, labelCol+len(local), "@"+domain, dim, false)
+	color = fg
+	if !a.live {
+		color = dim
 	}
-	if a.banked != nil {
-		c.text(row, labelCol, "banked", fg, false)
-		c.axis(row, barCol, a.banked.ticks, a.banked.pips)
-		c.text(row, valueCol, fmt.Sprintf("%11s", a.banked.count), fg, false)
-		c.text(row, tailCol, a.banked.tail, dim, false)
-		row++
-	}
+	c.text(row, fiveHourCol, a.fiveHour, color, false)
+	c.text(row, weeklyCol, a.weekly, color, false)
+	c.text(row, bankedCol, a.banked, dim, false)
 	return row + 1
 }
 
-// quotaColor mirrors the thresholds the TUI colours a percentage with.
-func quotaColor(left float64) string {
-	switch {
-	case left < 20:
-		return red
-	case left < 50:
-		return yellow
-	}
-	return green
+func (c *canvas) headers(row int) {
+	c.text(row, fiveHourCol, "5 hour", fg, true)
+	c.text(row, weeklyCol, "weekly", fg, true)
+	c.text(row, bankedCol, "banked", fg, true)
 }
 
 func main() {
 	var c canvas
 
-	// The scene: three accounts, one live, one selected, banked resets on two of
-	// them so the axes can be seen lining up against each other. The week ticks
-	// fall where bankedColumn puts 7, 14, 21 and 28 days across 22 cells.
-	weeks := []int{5, 10, 15, 20}
-
 	row := 0
 	c.text(row, 1, "cx", fg, true)
-	c.text(row, 5, "primary", fg, false)
-	c.text(row, 14, "· updated 12s ago", dim, false)
+	c.text(row, 5, "· updated 12s ago", dim, false)
 	row += 2
 
-	row = c.draw(row, account{
-		name: "primary", plan: "plus", email: "you@example.com", live: true,
-		meters: []meter{
-			{"5 hour", 42.0, "resets 06.09.2026 17:50 · in 2h 10m"},
-			{"weekly", 88.0, "resets 09.09.2026 13:39 · in 2d 21h"},
-		},
-		banked: &banked{weeks, []pip{{9, fg}, {19, fg}}, "2 left", "next in 12d 18h"},
+	c.text(row, 1, "▾", fg, false)
+	c.text(row, 4, "Antigravity", fg, true)
+	c.text(row, 16, "Pro", dim, false)
+	c.headers(row)
+	row = c.draw(row+2, account{
+		email: "work@example.com", live: true,
+		fiveHour: "78%  ↻  23.11.2026 15:20", weekly: "92%  ↻  27.11.2026 10:00", banked: "—",
+	})
+	row++
+
+	c.text(row, 1, "▾", fg, false)
+	c.rect(x(3), yTop(row)+2, 7*cellW, cellH-4, fg)
+	c.text(row, 4, "Codex", surface, true)
+	c.text(row, 11, "Plus · default", dim, false)
+	row = c.draw(row+2, account{
+		email: "you@example.com", live: true, selected: true,
+		fiveHour: "9%   ↻  23.11.2026 17:50", weekly: "88%  ↻  26.11.2026 13:39",
+		banked: "2 left   25.11.2026 17:50 · in 2d",
 	})
 	row = c.draw(row, account{
-		name: "work", plan: "pro", email: "work@example.com", selected: true,
-		meters: []meter{
-			{"5 hour", 100.0, "not started · starts with Codex use"},
-			{"weekly", 61.0, "resets 10.09.2026 18:39 · in 4d 2h"},
-		},
-		banked: &banked{weeks, []pip{{2, yellow}, {6, fg}, {13, fg}}, "3 left", "next in 3d 5h"},
+		email:    "other@example.com",
+		fiveHour: "Starts after reset", weekly: "0%   ↻  27.11.2026 09:40", banked: "0 left",
 	})
-	row = c.draw(row, account{
-		name: "backup", plan: "plus", email: "backup@example.com",
-		meters: []meter{
-			{"5 hour", 6.0, "resets 06.09.2026 16:20 · in 40m"},
-			{"weekly", 17.0, "resets 07.09.2026 12:19 · in 20h 39m"},
-		},
-	})
-	c.text(row, 1, "↑/↓ or j/k select   enter switch   r refresh   b banked   ? keys   q quit", dim, false)
-	rows := row + 1
+	c.text(row+1, 1, "↑/↓ select   ←/→ fold/unfold   enter open/activate   r refresh   s subscription   b banked   m models   ? keys   q quit", dim, false)
+	rows := row + 2
 
 	// Rounded to whole pixels: the card is the one edge a reader sees against the
 	// page, and a half-pixel border there renders as a soft grey line.
@@ -330,7 +224,7 @@ func main() {
 
 	fmt.Fprintf(os.Stdout, `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="%[1]s" height="%[2]s" viewBox="0 0 %[1]s %[2]s"
-     role="img" aria-label="the cx dashboard: three accounts with their 5-hour, weekly and banked quotas"
+     role="img" aria-label="cx dashboard with aligned quota columns for Antigravity and Codex"
      font-family="%[3]s" font-size="%[4]spx" fill="%[5]s"
      style="font-variant-ligatures:none">
 <defs>
@@ -356,8 +250,6 @@ func main() {
 func f(v float64) string {
 	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.2f", v), "0"), ".")
 }
-
-func clamp(v, lo, hi float64) float64 { return min(max(v, lo), hi) }
 
 func escape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)

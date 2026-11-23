@@ -28,6 +28,7 @@ type UsageResult struct {
 	Account      Account
 	Usage        WeeklyUsage
 	FiveHour     *WeeklyUsage
+	QuotaGroups  []quotaGroup
 	Err          string
 	PrimeErr     string
 	PrimeSkipped string
@@ -38,6 +39,12 @@ type UsageResult struct {
 	// SignInExpired is set when the backend rejects the stored credential and
 	// Codex cannot refresh it. Err then names the fix instead of the raw reply.
 	SignInExpired bool
+}
+
+type quotaGroup struct {
+	Name     string       `json:"name"`
+	Weekly   WeeklyUsage  `json:"weekly"`
+	FiveHour *WeeklyUsage `json:"five_hour,omitempty"`
 }
 
 type rpcEnvelope struct {
@@ -55,7 +62,6 @@ type rateWindow struct {
 	ResetsAt           *int64  `json:"resetsAt"`
 }
 type rateSnapshot struct {
-	PlanType  string      `json:"planType"`
 	Primary   *rateWindow `json:"primary"`
 	Secondary *rateWindow `json:"secondary"`
 }
@@ -74,6 +80,10 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if a.provider() != providerCodex {
+				out[i] = fetchAccountQuota(p, a)
+				return
+			}
 
 			var fiveHour *WeeklyUsage
 			var weekly WeeklyUsage
@@ -132,7 +142,7 @@ func fetchAllUsage(p paths, accounts []Account) []UsageResult {
 func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	results := fetchAllUsage(p, accounts)
 	for i := range results {
-		if results[i].Err == "" {
+		if results[i].Account.provider() == providerCodex && results[i].Err == "" {
 			annotateWindowState(p, &results[i])
 			annotateFiveHourWindowState(p, &results[i])
 		}
@@ -141,7 +151,7 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 	sem := make(chan struct{}, primeConcurrency)
 	var wg sync.WaitGroup
 	for i := range results {
-		if results[i].Err != "" || results[i].Usage.WindowStarted {
+		if results[i].Account.provider() != providerCodex || results[i].Err != "" || results[i].Usage.WindowStarted {
 			continue
 		}
 		wg.Add(1)
@@ -158,30 +168,24 @@ func fetchAllUsageWithPriming(p paths, accounts []Account) []UsageResult {
 				results[i].PrimeErr = singleLine("window-start turn succeeded, but quota refresh failed: " + err.Error())
 				return
 			}
-			weekly.WindowStarted = true
-			if fiveHour != nil {
-				fiveHour.WindowStarted = true
-			}
-			results[i].Usage = weekly
-			results[i].FiveHour = fiveHour
-			results[i].Primed = true
-
-			account := results[i].Account
-			if weekly.ResetsAt > 0 {
-				if updated, err := rememberWeeklyReset(p, account, weekly.ResetsAt); err == nil {
-					account = updated
-				}
-			}
-			if fiveHour != nil && fiveHour.ResetsAt > 0 {
-				if updated, err := rememberFiveHourReset(p, account, fiveHour.ResetsAt); err == nil {
-					account = updated
-				}
-			}
-			results[i].Account = account
+			markQuotaPrimed(p, &results[i], fiveHour, weekly)
 		}()
 	}
 	wg.Wait()
 	return results
+}
+
+func markQuotaPrimed(p paths, r *UsageResult, fiveHour *WeeklyUsage, weekly WeeklyUsage) {
+	weekly.WindowStarted = true
+	var fiveHourReset int64
+	if fiveHour != nil {
+		fiveHour.WindowStarted = true
+		fiveHourReset = fiveHour.ResetsAt
+	}
+	r.Usage, r.FiveHour, r.Primed = weekly, fiveHour, true
+	if a, err := rememberQuotaResets(p, r.Account, weekly.ResetsAt, fiveHourReset); err == nil {
+		r.Account = a
+	}
 }
 
 // classifyPrimeFailure splits a window-start failure into a real error and the
@@ -207,7 +211,7 @@ func annotateFiveHourWindowState(p paths, r *UsageResult) {
 	if u.UsedPercent > 0 {
 		u.WindowStarted = true
 		if u.ResetsAt > 0 {
-			if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+			if a, err := rememberQuotaResets(p, r.Account, 0, u.ResetsAt); err == nil {
 				r.Account = a
 			}
 		}
@@ -224,7 +228,7 @@ func annotateFiveHourWindowState(p paths, r *UsageResult) {
 	if fiveHourMatchesWeeklyStart(r.Account, r.Usage, *u, now) {
 		u.WindowStarted = true
 		if u.ResetsAt > 0 {
-			if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+			if a, err := rememberQuotaResets(p, r.Account, 0, u.ResetsAt); err == nil {
 				r.Account = a
 			}
 		}
@@ -232,7 +236,7 @@ func annotateFiveHourWindowState(p paths, r *UsageResult) {
 	}
 	u.WindowStarted = !looksLikeUnstartedWindow(*u, now)
 	if u.WindowStarted && u.ResetsAt > 0 {
-		if a, err := rememberFiveHourReset(p, r.Account, u.ResetsAt); err == nil {
+		if a, err := rememberQuotaResets(p, r.Account, 0, u.ResetsAt); err == nil {
 			r.Account = a
 		}
 	}
@@ -258,7 +262,7 @@ func annotateWindowState(p paths, r *UsageResult) {
 	if u.UsedPercent > 0 {
 		u.WindowStarted = true
 		if u.ResetsAt > 0 {
-			if a, err := rememberWeeklyReset(p, r.Account, u.ResetsAt); err == nil {
+			if a, err := rememberQuotaResets(p, r.Account, u.ResetsAt, 0); err == nil {
 				r.Account = a
 			}
 		}
@@ -274,7 +278,7 @@ func annotateWindowState(p paths, r *UsageResult) {
 	}
 	u.WindowStarted = !looksLikeUnstartedWindow(*u, now)
 	if u.WindowStarted && u.ResetsAt > 0 {
-		if a, err := rememberWeeklyReset(p, r.Account, u.ResetsAt); err == nil {
+		if a, err := rememberQuotaResets(p, r.Account, u.ResetsAt, 0); err == nil {
 			r.Account = a
 		}
 	}
@@ -288,33 +292,38 @@ func resetMatchesKnown(knownReset, currentReset int64, now time.Time) bool {
 	return max(delta, -delta) <= 120
 }
 
-func rememberWeeklyReset(p paths, a Account, resetAt int64) (Account, error) {
-	if resetAt <= 0 || a.WeeklyResetAt == resetAt {
+func rememberQuotaResets(p paths, a Account, weekly, fiveHour int64) (Account, error) {
+	if (weekly <= 0 || a.WeeklyResetAt == weekly) && (fiveHour <= 0 || a.FiveHourResetAt == fiveHour) {
 		return a, nil
 	}
-	a.WeeklyResetAt = resetAt
-	a.UpdatedAt = time.Now()
-	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+	lock, err := lockState(p)
+	if err != nil {
 		return a, err
 	}
-	return a, nil
-}
-
-func rememberFiveHourReset(p paths, a Account, resetAt int64) (Account, error) {
-	if resetAt <= 0 || a.FiveHourResetAt == resetAt {
-		return a, nil
-	}
-	a.FiveHourResetAt = resetAt
-	a.UpdatedAt = time.Now()
-	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+	defer lock.Close()
+	path := p.accountMeta(a.ID)
+	var stored Account
+	if err := readJSON(path, &stored); err != nil {
 		return a, err
 	}
+	if stored.ID != a.ID {
+		return a, fmt.Errorf("account changed: %s", a.Name)
+	}
+	if (weekly > 0 && stored.WeeklyResetAt != weekly) || (fiveHour > 0 && stored.FiveHourResetAt != fiveHour) {
+		if weekly > 0 {
+			stored.WeeklyResetAt = weekly
+		}
+		if fiveHour > 0 {
+			stored.FiveHourResetAt = fiveHour
+		}
+		stored.UpdatedAt = time.Now()
+		if err := writeJSON(path, stored); err != nil {
+			return a, err
+		}
+	}
+	// Refreshes keep the original subscription until the dashboard reloads its groups.
+	a.WeeklyResetAt, a.FiveHourResetAt, a.UpdatedAt = stored.WeeklyResetAt, stored.FiveHourResetAt, stored.UpdatedAt
 	return a, nil
-}
-
-func fetchUsage(p paths, a Account) (WeeklyUsage, error) {
-	_, weekly, err := fetchUsagePair(p, &a)
-	return weekly, err
 }
 
 func fetchUsagePair(p paths, a *Account) (*WeeklyUsage, WeeklyUsage, error) {
@@ -346,6 +355,7 @@ func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage,
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "app-server")
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+p.accountDir(a.ID))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -360,7 +370,11 @@ func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage,
 	if err := cmd.Start(); err != nil {
 		return nil, WeeklyUsage{}, err
 	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+	stop := sync.OnceFunc(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	defer stop()
 
 	enc := json.NewEncoder(stdin)
 	scanner := bufio.NewScanner(stdout)
@@ -379,6 +393,7 @@ func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage,
 	}
 	env, err := readResponse(scanner, 2)
 	if err != nil {
+		stop()
 		msg := stderr.String()
 		if len(msg) > 240 {
 			msg = msg[len(msg)-240:]
@@ -393,13 +408,6 @@ func fetchUsagePairViaAppServer(p paths, a *Account) (*WeeklyUsage, WeeklyUsage,
 		return nil, WeeklyUsage{}, fmt.Errorf("decode rate limits: %w", err)
 	}
 
-	snapshot := rr.RateLimits
-	if codex, ok := rr.RateLimitsByLimitID["codex"]; ok {
-		snapshot = codex
-	}
-	if err := rememberAccountPlan(p, a, snapshot.PlanType); err != nil {
-		return nil, WeeklyUsage{}, err
-	}
 	fiveHourWindow, weeklyWindow, err := selectCodexRateWindows(rr)
 	if err != nil {
 		return nil, WeeklyUsage{}, err
@@ -524,24 +532,4 @@ func sameID(v any, want int) bool {
 		return n == want
 	}
 	return false
-}
-
-func selectWeeklyWindow(rr rateResponse) (*rateWindow, error) {
-	var ws []*rateWindow
-	add := func(s rateSnapshot) {
-		if s.Primary != nil {
-			ws = append(ws, s.Primary)
-		}
-		if s.Secondary != nil {
-			ws = append(ws, s.Secondary)
-		}
-	}
-	add(rr.RateLimits)
-	if c, ok := rr.RateLimitsByLimitID["codex"]; ok {
-		add(c)
-	}
-	if len(ws) == 0 {
-		return nil, errors.New("server returned no rate-limit window")
-	}
-	return slices.MaxFunc(ws, byWindowMinutes), nil
 }

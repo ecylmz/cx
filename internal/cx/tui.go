@@ -2,11 +2,13 @@ package cx
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,37 +62,84 @@ func terminalSize() termSize {
 	return termSize{rows: rows, cols: cols}
 }
 
-// dashboardView is everything a frame needs: the data, the cursor, and the
-// terminal it has to fit into. State is read once per frame here rather than
-// once per keypress, which is what a cursor move used to cost.
+// dashboardView holds the account data, selection, and terminal size.
 type dashboardView struct {
-	state       State
-	accounts    []Account
-	results     []UsageResult
-	sel         int
-	footer      string
-	size        termSize
-	refreshedAt time.Time
-	overlay     overlay
+	state          State
+	accounts       []Account
+	results        []UsageResult
+	sel            int
+	footer         string
+	size           termSize
+	refreshedAt    time.Time
+	dateLayout     string
+	overlay        overlay
+	tierSel        int
+	foldedGroups   map[subscription]bool
+	expandedModels map[string]bool
 }
 
-// overlay is the full-screen layer drawn instead of the account list. Any key
-// dismisses one, so the dashboard only ever has to know which is up.
+func (v dashboardView) folded(s subscription) bool {
+	return v.hasSubscriptionGroups() && v.foldedGroups[s]
+}
+
+func (v dashboardView) showDefaultHint(sel int) bool {
+	return sel >= 0 && sel < len(v.accounts) && v.folded(v.accounts[sel].subscription())
+}
+
+func (v dashboardView) groupStart(i int) bool {
+	return i == 0 || v.accounts[i-1].subscription() != v.accounts[i].subscription()
+}
+
+func (v dashboardView) hasSubscriptionGroups() bool {
+	return len(v.accounts) > 1 && v.accounts[0].subscription() != v.accounts[len(v.accounts)-1].subscription()
+}
+
+func (v dashboardView) visibleAccounts() []int {
+	visible := make([]int, 0, len(v.accounts))
+	for i, a := range v.accounts {
+		if !v.folded(a.subscription()) || v.groupStart(i) {
+			visible = append(visible, i)
+		}
+	}
+	return visible
+}
+
+func dashboardAccounts(p paths) ([]Account, error) {
+	accounts, err := listAllAccounts(p)
+	if err != nil {
+		return nil, err
+	}
+	for i, account := range accounts {
+		if account.provider() == providerAgy && account.Email == "" {
+			accounts[i].Email = agyAccountEmail(p, account)
+		}
+	}
+	slices.SortStableFunc(accounts, func(a, b Account) int {
+		return cmp.Compare(a.subscription().label(), b.subscription().label())
+	})
+	return accounts, nil
+}
+
+// overlay identifies which screen takes the place of the account list.
 type overlay int
 
 const (
 	overlayNone overlay = iota
 	overlayKeys
 	overlayBanked
+	overlaySubscription
 )
 
 func newDashboardView(p paths, accounts []Account, results []UsageResult, sel int) dashboardView {
 	st, _ := loadState(p)
-	return dashboardView{state: st, accounts: accounts, results: results, sel: sel, size: terminalSize()}
+	return dashboardView{
+		state: st, accounts: accounts, results: results, sel: sel,
+		size: terminalSize(), dateLayout: localDateLayout(localeName()),
+	}
 }
 
 func runDashboard(p paths) error {
-	accounts, err := listAccounts(p)
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return err
 	}
@@ -118,8 +167,15 @@ func runDashboard(p paths) error {
 	keys := newKeyStream()
 
 	sel := 0
+	var v dashboardView
 	for {
-		v := newDashboardView(p, accounts, initialRefreshingResults(p, accounts), sel)
+		next := newDashboardView(p, accounts, initialRefreshingResults(p, accounts), sel)
+		next.foldedGroups = v.foldedGroups
+		next.expandedModels = v.expandedModels
+		for next.sel > 0 && next.folded(accounts[next.sel].subscription()) && !next.groupStart(next.sel) {
+			next.sel--
+		}
+		v = next
 		v.footer = refreshFooter(0, len(accounts))
 		layout := drawDashboardFrame(v)
 		cache, _ := loadCache(p)
@@ -167,17 +223,27 @@ func runDashboard(p paths) error {
 				}
 				var next string
 				next, layout = applyKey(&v, ev.key, layout, updates != nil)
-				if next != "switch" {
+				if next == "default" {
+					if err := applyDefaultSubscription(p, &v); err != nil {
+						ticker.Stop()
+						return err
+					}
+					layout = drawDashboardFrame(v)
+					continue
+				}
+				if next != "switch" && next != "subscription" {
 					action = next
 					continue
 				}
-				// A switch is applied in place. It rewrites the auth.json
-				// symlink and moves the account to the front of the
-				// most-recently-used order; no account's quota changes, so the
-				// numbers already on screen are carried over rather than
-				// fetched again.
+				// Account and subscription changes carry the existing quota results forward.
 				keys.drain()
-				rescan, err := applySwitch(p, &v)
+				var rescan bool
+				var err error
+				if next == "subscription" {
+					rescan, err = applySubscription(p, &v)
+				} else {
+					rescan, err = applySwitch(p, &v)
+				}
 				if err != nil {
 					ticker.Stop()
 					return err
@@ -204,9 +270,33 @@ func runDashboard(p paths) error {
 		case "quit":
 			return nil
 		case "refresh":
-			continue
+			accounts, err = dashboardAccounts(p)
+			if err != nil || len(accounts) == 0 {
+				return err
+			}
+			if v.sel < len(v.accounts) {
+				sel = accountIndex(accounts, v.accounts[v.sel].ID)
+			}
 		}
 	}
+}
+
+func applyDefaultSubscription(p paths, v *dashboardView) error {
+	target := v.accounts[v.sel]
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	activeID := st.activeAccountID(target.provider())
+	current := slices.IndexFunc(v.accounts, func(a Account) bool { return a.ID == activeID })
+	if current >= 0 && v.accounts[current].subscription() == target.subscription() {
+		target = v.accounts[current]
+	}
+	if err := switchAccount(p, target); err != nil {
+		return err
+	}
+	v.state, err = loadState(p)
+	return err
 }
 
 // applySwitch makes the selected account active and folds the result back into
@@ -218,10 +308,24 @@ func applySwitch(p paths, v *dashboardView) (rescan bool, err error) {
 		return false, nil
 	}
 	target := v.accounts[v.sel]
-	if err := switchAccount(p, target); err != nil {
+	if err := activateAccount(p, target, false); err != nil {
 		return false, err
 	}
-	accounts, err := listAccounts(p)
+	return reloadDashboardAccounts(p, v, target.ID)
+}
+
+func applySubscription(p paths, v *dashboardView) (bool, error) {
+	target := v.accounts[v.sel]
+	tier := subscriptionTiers[target.provider()][v.tierSel]
+	if err := changeSubscription(p, target, tier.id); err != nil {
+		return false, err
+	}
+	delete(v.foldedGroups, newSubscription(target.provider(), tier.id))
+	return reloadDashboardAccounts(p, v, target.ID)
+}
+
+func reloadDashboardAccounts(p paths, v *dashboardView, id string) (rescan bool, err error) {
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return false, err
 	}
@@ -242,7 +346,7 @@ func applySwitch(p paths, v *dashboardView) (rescan bool, err error) {
 	v.state, _ = loadState(p)
 	v.accounts = accounts
 	v.results = results
-	v.sel = accountIndex(accounts, target.ID)
+	v.sel = accountIndex(accounts, id)
 	return rescan || len(accounts) != len(byID), nil
 }
 
@@ -305,52 +409,83 @@ func applyCachedUsageFallback(p paths, results []UsageResult) {
 	}
 }
 
-// dashboardLoop draws one frame and serves input until an action, without the
-// refresh round that runDashboard wraps around it.
-func dashboardLoop(p paths, accounts []Account, results []UsageResult, sel int) (int, string, error) {
-	if !isTerminal() {
-		printStatus(p, results)
-		return sel, "quit", nil
-	}
-	old, err := beginTerminalSession()
-	if err != nil {
-		return sel, "", err
-	}
-	defer endTerminalSession(old)
-	v := newDashboardView(p, accounts, results, sel)
-	layout := drawDashboardFrame(v)
-	keys := newKeyStream()
-	// The action this returns rewrites accounts or leaves the screen. Keys typed
-	// ahead of it were meant for the screen being left, not for a repeat of the
-	// action, so they are dropped rather than replayed.
-	defer keys.drain()
-	for {
-		ev := <-keys.ch
-		if ev.err != nil {
-			return v.sel, "quit", nil // The terminal went away.
-		}
-		action := ""
-		action, layout = applyKey(&v, ev.key, layout, false)
-		if action != "" {
-			return v.sel, action, nil
-		}
-	}
-}
-
 // applyKey folds one keypress into the view and reports the action it asks for,
 // redrawing whatever the key changed. While a refresh is still streaming, the
 // keys that would act on half-fetched data are ignored rather than queued.
 func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing bool) (string, dashboardLayout) {
+	if v.overlay == overlaySubscription {
+		switch key {
+		case "enter":
+			v.overlay = overlayNone
+			return "subscription", layout
+		case "esc", "q", "ctrl-c", "ctrl-d":
+			v.overlay = overlayNone
+		default:
+			tiers := subscriptionTiers[v.accounts[v.sel].provider()]
+			v.tierSel = moveSelection(v.tierSel, len(tiers), key)
+		}
+		return "", drawDashboardFrame(*v)
+	}
 	if v.overlay != overlayNone {
 		v.overlay = overlayNone
 		return "", drawDashboardFrame(*v)
 	}
 	switch key {
-	case "enter":
-		if refreshing {
+	case "tab":
+		if next := nextSubscriptionAccount(v.accounts, v.sel); next != v.sel {
+			v.sel = next
+			return "", drawDashboardFrame(*v)
+		}
+		return "", layout
+	case "d":
+		if !refreshing && v.hasSubscriptionGroups() && v.sel >= 0 && v.sel < len(v.accounts) {
+			return "default", layout
+		}
+		return "", layout
+	case "s":
+		if !refreshing && v.sel >= 0 && v.sel < len(v.accounts) && !v.folded(v.accounts[v.sel].subscription()) {
+			account := v.accounts[v.sel]
+			tiers := subscriptionTiers[account.provider()]
+			if len(tiers) != 0 {
+				v.tierSel = max(0, slices.IndexFunc(tiers, func(t subscriptionTier) bool { return t.id == account.subscription().tier() }))
+				v.overlay = overlaySubscription
+				return "", drawDashboardFrame(*v)
+			}
+		}
+		return "", layout
+	case "m":
+		if v.sel < 0 || v.sel >= len(v.results) || !hasModelDetails(v.results[v.sel]) || v.folded(v.accounts[v.sel].subscription()) {
 			return "", layout
 		}
-		return "switch", layout
+		id := v.accounts[v.sel].ID
+		if v.expandedModels[id] {
+			delete(v.expandedModels, id)
+		} else {
+			if v.expandedModels == nil {
+				v.expandedModels = make(map[string]bool)
+			}
+			v.expandedModels[id] = true
+		}
+		return "", drawDashboardFrame(*v)
+	case "left", "right", "enter":
+		if v.hasSubscriptionGroups() && v.sel >= 0 && v.sel < len(v.accounts) {
+			p := v.accounts[v.sel].subscription()
+			open := key != "left"
+			if open == v.folded(p) {
+				if v.foldedGroups == nil {
+					v.foldedGroups = make(map[subscription]bool)
+				}
+				v.foldedGroups[p] = !open
+				for !open && !v.groupStart(v.sel) {
+					v.sel--
+				}
+				return "", drawDashboardFrame(*v)
+			}
+		}
+		if key == "enter" && !refreshing {
+			return "switch", layout
+		}
+		return "", layout
 	case "r":
 		if refreshing {
 			return "", layout
@@ -369,7 +504,11 @@ func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing b
 		return "", drawDashboardFrame(*v)
 	}
 	oldSel := v.sel
-	v.sel = moveSelection(v.sel, len(v.accounts), key)
+	visible := v.visibleAccounts()
+	if len(visible) == 0 {
+		return "", layout
+	}
+	v.sel = visible[moveSelection(max(slices.Index(visible, v.sel), 0), len(visible), key)]
 	if v.sel == oldSel {
 		return "", layout
 	}
@@ -377,8 +516,6 @@ func applyKey(v *dashboardView, key string, layout dashboardLayout, refreshing b
 		_, _ = os.Stdout.WriteString(update)
 		return "", layout
 	}
-	// The cheap two-line update is only valid while the frame sits still; a
-	// scrolled or oversized frame has to be drawn again in full.
 	return "", drawDashboardFrame(*v)
 }
 
@@ -405,6 +542,20 @@ func moveSelection(sel, n int, key string) int {
 
 const pageJump = 5
 
+func nextSubscriptionAccount(accounts []Account, sel int) int {
+	if sel < 0 || sel >= len(accounts) {
+		return sel
+	}
+	current := accounts[sel].subscription()
+	if next := slices.IndexFunc(accounts[sel+1:], func(a Account) bool { return a.subscription() != current }); next >= 0 {
+		return sel + 1 + next
+	}
+	if accounts[0].subscription() != current {
+		return 0
+	}
+	return sel
+}
+
 // accountIndex keeps the cursor on one account across a reload of the account
 // list, so an action that rewrites the list does not move the selection.
 func accountIndex(accounts []Account, id string) int {
@@ -416,12 +567,6 @@ func accountIndex(accounts []Account, id string) int {
 	return 0
 }
 
-func drawDashboard(p paths, accounts []Account, results []UsageResult, sel int) {
-	frame, _ := renderDashboardFrame(newDashboardView(p, accounts, results, sel))
-	fmt.Print(clearScreenHome)
-	fmt.Print(frame)
-}
-
 func drawDashboardFrame(v dashboardView) dashboardLayout {
 	frame, layout := renderDashboardFrame(v)
 	writeFullFrame(frame)
@@ -431,28 +576,59 @@ func drawDashboardFrame(v dashboardView) dashboardLayout {
 func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 	switch v.overlay {
 	case overlayKeys:
-		return renderHelpScreen(v.size, bankedUIActive(v.results)), dashboardLayout{}
+		return renderHelpScreen(v.size, bankedUIActive(v.results), v.hasSubscriptionGroups(), slices.ContainsFunc(v.results, hasModelDetails)), dashboardLayout{}
 	case overlayBanked:
 		return renderBankedScreen(v), dashboardLayout{}
+	case overlaySubscription:
+		return renderSubscriptionMenu(v), dashboardLayout{}
 	}
 
-	blocks := make([][]string, len(v.results))
+	visible := v.visibleAccounts()
+	columns := v.quotaColumns()
+	grouped := v.hasSubscriptionGroups()
+	blocks := make([][]string, len(visible))
+	headings := make([]int, len(visible))
 	total := 0
-	for i := range v.results {
-		blocks[i] = accountBlock(v, i)
+	quotaHeadingAt := -1
+	for i, index := range visible {
+		a := v.accounts[index]
+		var prefix []string
+		if v.groupStart(index) {
+			if i > 0 {
+				prefix = append(prefix, "")
+			}
+			if !v.folded(a.subscription()) {
+				label := ""
+				if grouped {
+					label = v.subscriptionHeading(a.subscription(), "▾")
+				}
+				if quotaHeadingAt < 0 {
+					quotaHeadingAt = i
+					prefix = append(prefix, columns.heading(v.quotaIndent(), label)...)
+				} else {
+					prefix = append(prefix, label)
+				}
+				if grouped {
+					prefix = append(prefix, "")
+				}
+			}
+		}
+		headings[i] = len(prefix)
+		blocks[i] = append(prefix, dashboardBlock(v, index, columns)...)
 		total += len(blocks[i])
 	}
 
 	head := []string{dashboardTitle(v), ""}
-	// The footer row stays present even when there is nothing to say, so the
-	// frame does not lose a line — and jump — the moment a refresh finishes.
+	// Keep the status row even when it is empty so refreshes do not move the table.
 	foot := []string{
-		dim(dashboardKeys(v.results, v.size.cols)),
-		dim(" " + v.footer),
+		"",
+		dim(dashboardKeys(v.results, v.size.cols, v.showDefaultHint(v.sel))),
+		" " + v.footerNote(),
 	}
 
 	start, end := 0, len(blocks)
 	scroll := false
+	var repeated []string
 	if v.size.rows > 0 {
 		// One row of headroom: the frame's last newline would otherwise push
 		// the screen up by one and invalidate every absolute row below.
@@ -460,11 +636,30 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 		if scroll = total > avail; scroll {
 			avail -= 2 // the two scroll hints
 		}
-		start, end = blockWindow(blocks, v.sel, avail)
+		selected := slices.Index(visible, v.sel)
+		start, end = blockWindow(blocks, selected, avail)
+		if quotaHeadingAt >= 0 && start > quotaHeadingAt && !v.groupStart(visible[start]) {
+			// Mid-group, the shared headings may need a line of their own.
+			headerRows := 1
+			if grouped {
+				headerRows = 3
+			}
+			start, end = blockWindow(blocks, selected, avail-headerRows)
+		}
+		if quotaHeadingAt >= 0 && start > quotaHeadingAt {
+			if !v.groupStart(visible[start]) && grouped {
+				label := v.subscriptionHeading(v.accounts[visible[start]].subscription(), "▾")
+				repeated = append(columns.heading(v.quotaIndent(), label), "")
+			} else if slices.ContainsFunc(visible[start:end], func(index int) bool {
+				return !v.folded(v.accounts[index].subscription())
+			}) {
+				repeated = columns.heading(v.quotaIndent(), "")
+			}
+		}
 	}
 
 	var b strings.Builder
-	layout := dashboardLayout{headerRows: make([]int, len(blocks))}
+	layout := dashboardLayout{headerRows: make([]int, len(v.results))}
 	for i := range layout.headerRows {
 		layout.headerRows[i] = -1
 	}
@@ -477,16 +672,24 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 	for _, line := range head {
 		write(line)
 	}
-	if scroll {
+	if scroll && start > 0 {
 		write(scrollHint("↑", start))
 	}
+	for _, line := range repeated {
+		write(line)
+	}
 	for i := start; i < end; i++ {
-		layout.headerRows[i] = row
-		for _, line := range blocks[i] {
+		lines, headingRows := blocks[i], headings[i]
+		if i == start && i > 0 && v.groupStart(visible[i]) {
+			lines = lines[1:]
+			headingRows--
+		}
+		layout.headerRows[visible[i]] = row + headingRows
+		for _, line := range lines {
 			write(line)
 		}
 	}
-	if scroll {
+	if scroll && end < len(blocks) {
 		write(scrollHint("↓", len(blocks)-end))
 	}
 	for _, line := range foot {
@@ -532,69 +735,164 @@ func scrollHint(arrow string, n int) string {
 }
 
 func dashboardTitle(v dashboardView) string {
-	// The hostname used to sit here; which account is live and how old the
-	// numbers are is what the screen is actually about.
-	name := "no active account"
-	for _, a := range v.accounts {
-		if a.ID == v.state.ActiveID {
-			name = a.Name
-			break
+	line := " " + bold("cx")
+	if !v.hasSubscriptionGroups() {
+		label := "no active account"
+		for _, a := range v.accounts {
+			if a.ID == v.state.activeAccountID(a.provider()) {
+				label = styledAccountLabel(dashboardAccountLabel(a), false, true)
+				break
+			}
 		}
+		if len(v.accounts) != 0 {
+			line += "  " + subscriptionLabel(v.accounts[0].subscription()) + " ·"
+		}
+		line += "  " + label
 	}
-	line := " " + bold("cx") + "  " + name
 	if !v.refreshedAt.IsZero() {
 		line += "  " + dim("· updated "+shortDuration(time.Since(v.refreshedAt))+" ago")
 	}
 	return line
 }
 
+func dashboardBlock(v dashboardView, i int, columns quotaColumns) []string {
+	a := v.accounts[i]
+	if !v.folded(a.subscription()) {
+		return accountBlock(v, i, columns)
+	}
+	activeID := v.state.activeAccountID(a.provider())
+	active := ""
+	count := 0
+	for j := i; j < len(v.accounts) && v.accounts[j].subscription() == a.subscription(); j++ {
+		if v.accounts[j].ID == activeID {
+			active = dashboardAccountLabel(v.accounts[j])
+		}
+		count++
+	}
+	noun := "accounts"
+	if count == 1 {
+		noun = "account"
+	}
+	line := v.subscriptionHeading(a.subscription(), "▸")
+	if active != "" {
+		line += " · " + styledAccountLabel(active, false, true)
+	}
+	line += fmt.Sprintf(" · %d %s", count, noun)
+	return []string{line}
+}
+
+func subscriptionLabel(s subscription) string {
+	return bold(s.provider().label()) + " " + dim(s.tierLabel())
+}
+
+func (v dashboardView) subscriptionHeading(s subscription, marker string) string {
+	name := " " + bold(s.provider().label()) + " "
+	if v.sel >= 0 && v.sel < len(v.accounts) && v.accounts[v.sel].subscription() == s {
+		if useColor {
+			name = ansi("7", name) + " "
+		} else {
+			name = " [" + s.provider().label() + "] "
+		}
+	}
+	line := " " + marker + " " + name + dim(s.tierLabel())
+	if slices.ContainsFunc(v.accounts, func(a Account) bool {
+		return a.ID == v.state.defaultAccountID() && a.subscription() == s
+	}) {
+		line += dim(" · default")
+	}
+	return line
+}
+
+func (v dashboardView) quotaIndent() int {
+	if v.hasSubscriptionGroups() {
+		return 6
+	}
+	return 4
+}
+
+func (v dashboardView) quotaColumns() quotaColumns {
+	width := 0
+	for _, a := range v.accounts {
+		width = max(width, visibleCells(dashboardAccountLabel(a)))
+	}
+	for _, r := range v.results {
+		for _, group := range r.QuotaGroups {
+			width = max(width, visibleCells(group.Name))
+		}
+	}
+	cols := v.size.cols
+	if cols > 0 {
+		cols = max(1, cols-v.quotaIndent())
+	}
+	now := time.Now()
+	bankedDates := slices.ContainsFunc(v.results, func(r UsageResult) bool {
+		return r.BankedLoaded && r.BankedErr == "" && !nextBankedExpiry(r.BankedResets, now).IsZero()
+	})
+	return newQuotaColumns(cols, width, bankedDates)
+}
+
 // accountBlock renders one account as the lines it occupies, so the frame can be
 // windowed by account instead of being cut at an arbitrary row.
-func accountBlock(v dashboardView, i int) []string {
+func accountBlock(v dashboardView, i int, columns quotaColumns) []string {
 	selected := i == v.sel
-	indent := gutter(selected, 3)
 	r := v.results[i]
-	lines := []string{dashboardAccountHeader(v.state, r.Account, selected)}
-	banked := func() {
-		lines = append(lines, bankedResetLinesWidth(r, indent, v.size.cols)...)
+	active := r.Account.ID == v.state.activeAccountID(r.Account.provider())
+	padding := strings.Repeat(" ", v.quotaIndent()-4)
+	quota, lines := columns.rows(r, v.dateLayout, v.expandedModels[r.Account.ID])
+	if !active {
+		quota = neutralLine(quota, !selected)
 	}
-	// The banked axis is the block's third meter line, so it is drawn with the
-	// other two rather than below whatever note follows them.
-	meters := func() {
-		for _, line := range usageLinesWidth(r, v.size.cols) {
-			lines = append(lines, indent+line)
+	labelWidth := columns.labelWidth + 2 // account marker and the space before the label
+	header := fitCells(dashboardAccountHeader(v.state, r.Account, selected), labelWidth)
+	header += strings.Repeat(" ", labelWidth-visibleCells(header)) + quotaColumnGap + quota
+	lines = append([]string{padding + gutter(selected, 2) + header}, lines...)
+	for i, line := range lines[1:] {
+		if !active {
+			line = neutralLine(line, !selected)
 		}
-		banked()
+		lines[i+1] = padding + "    " + line
 	}
+	return lines
+}
 
+func (v dashboardView) footerNote() string {
+	progress := dim(v.footer)
+	if v.sel < 0 || v.sel >= len(v.results) || v.folded(v.results[v.sel].Account.subscription()) {
+		return progress
+	}
+	note := accountNote(v.results[v.sel])
+	if note == "" {
+		return progress
+	}
+	if v.footer != "" {
+		return progress + dim(" · ") + note
+	}
+	return note
+}
+
+func accountNote(r UsageResult) string {
 	if refreshing, note := refreshingStatus(r.Err); refreshing {
-		meters()
 		if !r.Usage.FetchedAt.IsZero() && !r.Usage.Fresh {
 			note += " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
 		}
-		lines = append(lines, indent+cyan(note))
+		return cyan(note)
 	} else if r.Err == "" {
-		meters()
 		switch {
 		case r.PrimeErr != "":
-			lines = append(lines, indent+red("window start failed")+" "+r.PrimeErr)
-		case r.PrimeSkipped != "":
-			lines = append(lines, indent+dim("window not started · "+r.PrimeSkipped))
+			return red("window start failed") + " " + r.PrimeErr
 		case r.Primed:
-			lines = append(lines, indent+dim("quota windows started just now"))
+			return dim("quota windows started just now")
 		}
 	} else if !r.Usage.FetchedAt.IsZero() {
-		meters()
 		note := yellow("stale") + " · cached " + shortDuration(time.Since(r.Usage.FetchedAt)) + " ago"
 		if r.SignInExpired {
 			note += " · " + red(r.Err)
 		}
-		lines = append(lines, indent+note)
+		return note
 	} else {
-		lines = append(lines, indent+red("unavailable")+" "+r.Err)
-		banked()
+		return red("unavailable") + " " + r.Err
 	}
-	return append(lines, "")
+	return ""
 }
 
 // keyHint is one entry of the footer. rank orders which hints are given up on a
@@ -608,16 +906,27 @@ type keyHint struct {
 // which is where the key that gets you out lives, so hints are dropped from the
 // line deliberately: the niche screen first, then the keys a terminal user tries
 // anyway. What survives always ends with the full key list and quit.
-func dashboardKeys(results []UsageResult, cols int) string {
+func dashboardKeys(results []UsageResult, cols int, showDefaultHint bool) string {
 	hints := []keyHint{
-		{"↑/↓ or j/k select", 2},
+		{"↑/↓ select", 2},
 		{"enter switch", 1},
 		{"r refresh", 3},
+		{"s subscription", 2},
 	}
 	// No banked resets anywhere, no key advertised — the same gate the key itself
 	// and the help screen use.
 	if bankedUIActive(results) {
 		hints = append(hints, keyHint{"b banked", 4})
+	}
+	if slices.ContainsFunc(results, hasModelDetails) {
+		hints = append(hints, keyHint{"m models", 2})
+	}
+	if len(results) > 1 && results[0].Account.subscription() != results[len(results)-1].Account.subscription() {
+		hints[1].text = "enter open/activate"
+		hints = slices.Insert(hints, 1, keyHint{"←/→ fold/unfold", 3})
+		if showDefaultHint {
+			hints = append(hints, keyHint{"d set default", 1})
+		}
 	}
 	hints = append(hints, keyHint{"? keys", 0}, keyHint{"q quit", 0})
 
@@ -645,7 +954,7 @@ func dashboardKeys(results []UsageResult, cols int) string {
 	return line
 }
 
-func renderHelpScreen(size termSize, banked bool) string {
+func renderHelpScreen(size termSize, banked, grouped, models bool) string {
 	keys := [][2]string{
 		{"↑ ↓  ·  k j", "move the cursor"},
 		{"PgUp PgDn", "jump " + fmt.Sprint(pageJump) + " accounts"},
@@ -653,9 +962,22 @@ func renderHelpScreen(size termSize, banked bool) string {
 		{"G  ·  End", "last account"},
 		{"enter", "switch to the selected account"},
 		{"r", "refresh quota and banked resets"},
+		{"s", "choose a tier for the selected account"},
+	}
+	if grouped {
+		keys[1][1] = "jump " + fmt.Sprint(pageJump) + " entries"
+		keys[4][1] = "open a group or activate an account"
+		keys = append(keys,
+			[2]string{"Tab", "go to the next subscription"},
+			[2]string{"← / →", "fold or unfold the subscription group"},
+			[2]string{"d", "set the subscription under the cursor as default"},
+		)
 	}
 	if banked {
-		keys = append(keys, [2]string{"b", "banked reset dates, every account"})
+		keys = append(keys, [2]string{"b", "show Codex banked reset dates"})
+	}
+	if models {
+		keys = append(keys, [2]string{"m", "show / hide extra models for the selected account"})
 	}
 	keys = append(keys,
 		[2]string{"?", "this screen"},
@@ -675,7 +997,28 @@ func renderHelpScreen(size termSize, banked bool) string {
 			rows = append(rows, dim(fmt.Sprintf("   … %d more keys", hidden)))
 		}
 	}
-	return overlayFrame(" "+bold("cx")+"  keys", rows, size, spacing)
+	return overlayFrame(" "+bold("cx")+"  keys", rows, size, spacing, "press any key to go back")
+}
+
+func renderSubscriptionMenu(v dashboardView) string {
+	account := v.accounts[v.sel]
+	tiers := subscriptionTiers[account.provider()]
+	fit, spacing := overlayFit(len(tiers), v.size.rows)
+	offset := max(0, v.tierSel-fit+1)
+	rows := make([]string, 0, fit)
+	for i, tier := range tiers[offset : offset+fit] {
+		selected := i+offset == v.tierSel
+		marker := "○"
+		if tier.id == account.subscription().tier() {
+			marker = green("●")
+		}
+		label := tier.label
+		if selected {
+			label = cyan(bold(label))
+		}
+		rows = append(rows, gutter(selected, 4)+marker+" "+label)
+	}
+	return overlayFrame(" "+bold(account.provider().label())+"  subscription · "+styledAccountLabel(dashboardAccountLabel(account), false, false), rows, v.size, spacing, "↑/↓ choose · enter save · esc cancel")
 }
 
 // overlayFit reports how many listing rows an overlay screen can show and
@@ -697,7 +1040,7 @@ func overlayFit(rowCount, termRows int) (fit int, spacing bool) {
 
 // overlayFrame draws an overlay screen: a title, the listing, and the footer
 // every overlay shares, spaced apart when overlayFit says there is room.
-func overlayFrame(title string, rows []string, size termSize, spacing bool) string {
+func overlayFrame(title string, rows []string, size termSize, spacing bool, hint string) string {
 	var b strings.Builder
 	b.WriteString(fitCells(title, size.cols) + "\n")
 	if spacing {
@@ -709,14 +1052,10 @@ func overlayFrame(title string, rows []string, size termSize, spacing bool) stri
 	if spacing {
 		b.WriteString("\n")
 	}
-	b.WriteString(fitCells(dim(" press any key to go back"), size.cols) + "\n")
+	b.WriteString(fitCells(dim(" "+hint), size.cols) + "\n")
 	return b.String()
 }
 
-// renderBankedScreen is the detail behind the axis on every account block: the
-// dates the pips stand for. It lists every account rather than the selected one,
-// because the question it answers — which account's reserve do I spend before it
-// goes — is asked across the list, not within one row of it.
 // bankedUIActive reports whether banked resets are worth a key at all. With none
 // anywhere, `b` opens a screen that says "none" five times over, so the key does
 // nothing and neither the footer nor the help screen offers it.
@@ -730,6 +1069,7 @@ func bankedUIActive(results []UsageResult) bool {
 	return false
 }
 
+// renderBankedScreen lists the expiries behind each Codex account's banked count.
 func renderBankedScreen(v dashboardView) string {
 	// A row remembers whether it is a reset, so a listing that has to be cut can
 	// say how many resets went missing rather than how many lines did.
@@ -740,12 +1080,13 @@ func renderBankedScreen(v dashboardView) string {
 
 	now := time.Now()
 	rows := make([]row, 0, len(v.results)*2)
+	labelWidth := v.quotaColumns().labelWidth
 	for i, r := range v.results {
-		name := bold(r.Account.Name)
-		if i == v.sel {
-			name = cyan(bold(r.Account.Name))
+		if r.Account.provider() != providerCodex {
+			continue
 		}
-		head := "   " + padStyled(name, r.Account.Name, accountNameCell)
+		label := fitCells(styledAccountLabel(dashboardAccountLabel(r.Account), i == v.sel, false), labelWidth)
+		head := "   " + label + strings.Repeat(" ", labelWidth-visibleCells(label)) + quotaColumnGap
 		switch {
 		case r.BankedErr != "":
 			rows = append(rows, row{text: head + yellow("unavailable") + " · " + dim(r.BankedErr)})
@@ -792,22 +1133,10 @@ func renderBankedScreen(v dashboardView) string {
 	for i, r := range rows {
 		texts[i] = r.text
 	}
-	return overlayFrame(" "+bold("cx")+"  banked resets", texts, v.size, spacing)
+	return overlayFrame(" "+bold("cx")+"  banked resets", texts, v.size, spacing, "press any key to go back")
 }
 
-// Account rows are laid out in fixed cells so the plan and email columns line
-// up down the list.
-const (
-	accountNameCell = 18
-	accountPlanCell = 10
-)
-
-// The cursor is a bar drawn down the whole selected block rather than a caret on
-// its header row: every account is several lines tall, so a single marked row
-// left the eye guessing where the selection started and ended. gutter returns
-// the leading cells of one line of a block — the bar sits inside the frame's
-// left margin and is padded back out to width, so the columns to its right stay
-// aligned whether or not the account is selected.
+// gutter reserves the same leading cells whether or not a row has a cursor.
 func gutter(selected bool, width int) string {
 	if !selected {
 		return strings.Repeat(" ", width)
@@ -816,29 +1145,37 @@ func gutter(selected bool, width int) string {
 }
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
-	active := dim("○")
-	if a.ID == st.ActiveID {
-		active = green("●")
-	}
-	// The selected account's name carries the highlight too, so the cursor is
-	// still readable where a terminal renders the bar faintly.
-	name := bold(a.Name)
+	active := a.ID == st.activeAccountID(a.provider())
+	label := styledAccountLabel(dashboardAccountLabel(a), selected, active)
 	if selected {
-		name = cyan(bold(a.Name))
+		return "  " + label
 	}
-	var b strings.Builder
-	// Pad before styling: a width verb counts the escape bytes of an already
-	// colored string as characters, which silently shrinks the column.
-	fmt.Fprintf(&b, "%s%s %s", gutter(selected, 2), active, padStyled(name, a.Name, accountNameCell))
-	// The plan cell keeps its width even when the account has no plan, so an
-	// account without one does not slide its email into the plan column.
-	if a.Plan != "" || a.Email != "" {
-		b.WriteString(" " + padCell(a.Plan, accountPlanCell))
+	marker := dim("○")
+	if active {
+		marker = green("●")
 	}
-	if a.Email != "" {
-		b.WriteString(" " + dim(a.Email))
+	return marker + " " + label
+}
+
+func dashboardAccountLabel(a Account) string {
+	return cmp.Or(a.Email, a.Name)
+}
+
+func styledAccountLabel(label string, selected, active bool) string {
+	if label == "" {
+		return dim("—")
 	}
-	return strings.TrimRight(b.String(), " ")
+	local, domain, hasDomain := strings.Cut(label, "@")
+	name := bold(local)
+	if active {
+		name = green(name)
+	} else if selected {
+		name = cyan(name)
+	}
+	if hasDomain {
+		name += dim("@" + domain)
+	}
+	return name
 }
 
 func writeFullFrame(frame string) {
@@ -854,23 +1191,30 @@ func writeFullFrame(frame string) {
 // selectionUpdateString repaints just the two account blocks a cursor move
 // touched — the one that lost the gutter bar and the one that gained it. A block
 // keeps its line count whichever way it is drawn, so the rows below it do not
-// move. It returns "" whenever the absolute rows cannot be trusted — a frame
-// taller than the screen has scrolled, and a scrolled-out account has no row at
-// all — and the caller then redraws the whole frame instead.
+// move. The caller redraws the full frame if either row is off screen, the
+// frame has scrolled, or the move changes a subscription heading or the footer.
 func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboardLayout) string {
 	rows := layout.headerRows
 	if !layout.fits || oldSel < 0 || newSel < 0 ||
 		oldSel >= len(v.results) || newSel >= len(v.results) ||
 		oldSel >= len(rows) || newSel >= len(rows) ||
-		rows[oldSel] < 0 || rows[newSel] < 0 {
+		rows[oldSel] < 0 || rows[newSel] < 0 ||
+		v.results[oldSel].Account.subscription() != v.results[newSel].Account.subscription() ||
+		v.showDefaultHint(oldSel) != v.showDefaultHint(newSel) {
 		return ""
 	}
+	v.sel = oldSel
+	note := v.footerNote()
 	v.sel = newSel
+	if note != v.footerNote() {
+		return ""
+	}
+	columns := v.quotaColumns()
 	var b strings.Builder
 	b.WriteString(syncOutputBegin)
 	for _, idx := range []int{oldSel, newSel} {
 		row := rows[idx]
-		for _, line := range accountBlock(v, idx) {
+		for _, line := range dashboardBlock(v, idx, columns) {
 			fmt.Fprintf(&b, "\x1b[%d;1H%s%s", row, eraseCurrentLine, fitCells(line, v.size.cols))
 			row++
 		}
@@ -879,16 +1223,20 @@ func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboard
 	return b.String()
 }
 
-func pickAccount(p paths) (Account, error) {
-	accounts, err := listAccounts(p)
+func pickAccount(p paths, which *provider, tier string) (Account, error) {
+	accounts, err := dashboardAccounts(p)
 	if err != nil {
 		return Account{}, err
 	}
+	if which != nil {
+		accounts = slices.DeleteFunc(accounts, func(a Account) bool { return a.provider() != *which })
+	}
+	accounts = accountsByTier(accounts, tier)
 	if len(accounts) == 0 {
 		return Account{}, errors.New("no accounts")
 	}
 	if !isTerminal() {
-		return Account{}, errors.New("interactive selection requires a terminal")
+		return Account{}, errors.New("interactive selection requires a terminal; pass an account name")
 	}
 	old, err := beginTerminalSession()
 	if err != nil {
@@ -909,6 +1257,8 @@ func pickAccount(p paths) (Account, error) {
 			return accounts[sel], nil
 		case "esc", "q", "ctrl-c", "ctrl-d":
 			return Account{}, errors.New("cancelled")
+		case "tab":
+			sel = nextSubscriptionAccount(accounts, sel)
 		default:
 			sel = moveSelection(sel, len(accounts), k)
 		}
@@ -917,18 +1267,25 @@ func pickAccount(p paths) (Account, error) {
 
 func renderAccountPicker(accounts []Account, sel int) string {
 	var b strings.Builder
-	b.WriteString(bold(" Switch Codex account"))
+	b.WriteString(bold(" Switch account"))
 	b.WriteString("\n\n")
 	for i, a := range accounts {
+		if i == 0 || accounts[i-1].subscription() != a.subscription() {
+			fmt.Fprintf(&b, "    %s\n", subscriptionLabel(a.subscription()))
+		}
 		selected := i == sel
 		name := a.Name
 		if selected {
 			name = cyan(bold(a.Name))
 		}
-		fmt.Fprintf(&b, "%s%s %s\n", gutter(selected, 2), padStyled(name, a.Name, 18), dim(emptyDash(a.Email)))
+		fmt.Fprintf(&b, "%s%s %s\n", gutter(selected, 4), padStyled(name, a.Name, 18), dim(a.Email))
 	}
 	b.WriteString("\n")
-	b.WriteString(dim(" ↑/↓ or j/k · enter switch · esc cancel"))
+	keys := " ↑/↓ or j/k"
+	if accounts[0].subscription() != accounts[len(accounts)-1].subscription() {
+		keys += " · Tab subscription"
+	}
+	b.WriteString(dim(keys + " · enter switch · esc cancel"))
 	b.WriteByte('\n')
 	return b.String()
 }
@@ -1217,8 +1574,6 @@ func readEscapeSequence(ch chan byteRead) (string, error) {
 	return "", nil
 }
 
-func readKey() (string, error) { return readKeyFrom(keyBytes()) }
-
 func readKeyFrom(ch chan byteRead) (string, error) {
 	b, err := nextByte(ch)
 	if err != nil {
@@ -1227,6 +1582,8 @@ func readKeyFrom(ch chan byteRead) (string, error) {
 	switch b {
 	case '\r', '\n':
 		return "enter", nil
+	case '\t':
+		return "tab", nil
 	case 3:
 		// Raw mode clears ISIG, so Ctrl+C arrives as a byte and never as a
 		// signal. Left unnamed it matched no case and did nothing at all.

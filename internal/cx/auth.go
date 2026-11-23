@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type authIdentity struct{ AccountID, Email, Plan string }
+type authIdentity struct{ AccountID, Email, Tier string }
 
 type authShape struct {
 	Tokens *struct {
@@ -43,9 +43,13 @@ func parseAuth(path string) (authIdentity, error) {
 					id.AccountID = v
 				}
 			}
-			if v, _ := ns["chatgpt_plan_type"].(string); v != "" {
-				id.Plan = v
-			}
+			id.Tier, _ = ns["chatgpt_plan_type"].(string)
+		}
+	}
+	if id.Tier == "" || id.Tier == "unknown" {
+		claims, _ := jwtClaims(a.Tokens.AccessToken)
+		if ns, ok := claims["https://api.openai.com/auth"].(map[string]any); ok {
+			id.Tier, _ = ns["chatgpt_plan_type"].(string)
 		}
 	}
 	if id.AccountID == "" {
@@ -94,10 +98,10 @@ func ensureFileStoreConfig(path string, backup bool) error {
 	if backup && original != "" {
 		bak := path + ".cx-backup"
 		if _, err := os.Stat(bak); errors.Is(err, os.ErrNotExist) {
-			_ = atomicWrite(bak, []byte(original), 0600)
+			_ = atomicWrite(bak, []byte(original), 0o600)
 		}
 	}
-	return atomicWrite(path, []byte(updated), 0600)
+	return atomicWrite(path, []byte(updated), 0o600)
 }
 
 func installAuth(src, dst string) error {
@@ -109,7 +113,7 @@ func installAuth(src, dst string) error {
 	if err := json.Unmarshal(b, &v); err != nil {
 		return fmt.Errorf("invalid auth JSON: %w", err)
 	}
-	return atomicWrite(dst, b, 0600)
+	return atomicWrite(dst, b, 0o600)
 }
 
 // linkPointsInto reports whether the symlink at link resolves to a path inside
@@ -135,7 +139,7 @@ func linkPointsInto(link, root string) bool {
 }
 
 func installManagedAuthLink(p paths, live string, a Account) error {
-	if err := os.MkdirAll(filepath.Dir(live), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
 		return err
 	}
 	info, err := os.Lstat(live)
@@ -174,7 +178,7 @@ func configureCodexHomeSelection(p paths, home string, a Account) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(home, 0700); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create Codex home %s: %w", home, err)
 	}
 	if err := ensureFileStoreConfig(filepath.Join(home, "config.toml"), true); err != nil {
@@ -187,6 +191,53 @@ func configureCodexHomeSelection(p paths, home string, a Account) error {
 }
 
 func switchAccount(p paths, a Account) error {
+	return activateAccount(p, a, true)
+}
+
+func activateAccount(p paths, a Account, setDefaultSubscription bool) error {
+	lock, err := lockState(p)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	var stored Account
+	if err := readJSON(p.accountMeta(a.ID), &stored); err != nil {
+		return fmt.Errorf("read account: %w", err)
+	}
+	if stored.ID != a.ID || stored.subscription() != a.subscription() {
+		return fmt.Errorf("account changed: %s", a.Name)
+	}
+	a = stored
+	st, err := loadState(p)
+	if err != nil {
+		return err
+	}
+	st.setActiveAccount(a)
+	if setDefaultSubscription {
+		st.DefaultAccountID = a.ID
+	}
+	save := func() error {
+		now := time.Now()
+		a.LastUsedAt, a.UpdatedAt = &now, now
+		if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
+			return err
+		}
+		return saveState(p, st)
+	}
+	switch a.provider() {
+	case providerCodex:
+		if err := switchCodexAccount(p, a); err != nil {
+			return err
+		}
+	case providerAgy:
+		return switchAgyAccount(p, a, save)
+	default:
+		return fmt.Errorf("unknown provider %q", a.provider())
+	}
+	return save()
+}
+
+func switchCodexAccount(p paths, a Account) error {
 	ident, err := parseAuth(p.accountAuth(a.ID))
 	if err != nil {
 		return fmt.Errorf("invalid credential for %s: %w", a.Name, err)
@@ -197,15 +248,5 @@ func switchAccount(p paths, a Account) error {
 	if a.Email != "" && ident.Email != "" && !strings.EqualFold(a.Email, ident.Email) {
 		return fmt.Errorf("identity mismatch for %s; expected %s, found %s", a.Name, a.Email, ident.Email)
 	}
-	if err := configureCodexHomeSelection(p, p.CodexHome, a); err != nil {
-		return err
-	}
-
-	now := time.Now()
-	a.LastUsedAt = &now
-	a.UpdatedAt = now
-	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
-		return err
-	}
-	return saveState(p, State{ActiveID: a.ID})
+	return configureCodexHomeSelection(p, p.CodexHome, a)
 }

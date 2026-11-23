@@ -8,40 +8,46 @@ import (
 	"time"
 )
 
-func TestParseLoginCommandArgs(t *testing.T) {
-	got, err := parseLoginCommandArgs([]string{"backup", "--expect", "user@example.com"}, false, "cx add [NAME] [--expect EMAIL]")
+func TestParseAccountCommandArgs(t *testing.T) {
+	const usage = "cx add [NAME] [--provider PROVIDER] [--expect EMAIL]"
+	got, err := parseAccountCommandArgs([]string{"backup", "--expect", "user@example.com"}, "--expect", usage, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "backup" || got.ExpectedEmail != "user@example.com" {
+	if len(got.names) != 1 || got.names[0] != "backup" || got.expectedEmail != "user@example.com" || got.provider != nil {
 		t.Fatalf("args=%+v", got)
 	}
 
-	got, err = parseLoginCommandArgs([]string{"--expect=user@example.com", "backup"}, true, "cx relogin NAME [--expect EMAIL]")
+	got, err = parseAccountCommandArgs([]string{"--expect=user@example.com", "backup", "--provider=codex"}, "--expect", usage, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "backup" || got.ExpectedEmail != "user@example.com" {
+	if len(got.names) != 1 || got.names[0] != "backup" || got.expectedEmail != "user@example.com" || got.provider == nil || *got.provider != providerCodex {
 		t.Fatalf("args=%+v", got)
 	}
 
-	for _, args := range [][]string{{"--expect"}, {"--bad"}, {"backup", "other"}, {"--expect", "a@example.com", "--expect", "b@example.com"}} {
-		if _, err := parseLoginCommandArgs(args, false, "cx add [NAME] [--expect EMAIL]"); err == nil {
+	for _, args := range [][]string{
+		{"--expect"},
+		{"--bad"},
+		{"--expect", "a@example.com", "--expect", "b@example.com"},
+		{"--provider"},
+		{"--provider="},
+		{"--provider", "unknown"},
+		{"--provider=codex", "--provider=agy"},
+	} {
+		if _, err := parseAccountCommandArgs(args, "--expect", usage, true); err == nil {
 			t.Fatalf("expected parse failure for %+v", args)
 		}
-	}
-	if _, err := parseLoginCommandArgs([]string{"--expect", "a@example.com"}, true, "cx relogin NAME [--expect EMAIL]"); err == nil {
-		t.Fatal("expected relogin name requirement")
 	}
 }
 
 func TestPrintHelpListCurrentAndUse(t *testing.T) {
 	p := makeTestPaths(t)
-	a := Account{ID: "a", Name: "primary", AccountID: "acct-a", Email: "a@example.com", Plan: "plus", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	a := Account{ID: "a", Name: "primary", AccountID: "acct-a", Email: "a@example.com", Subscription: codexPlus, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	b := Account{ID: "b", Name: "backup", AccountID: "acct-b", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	writeTestAccount(t, p, a)
 	writeTestAccount(t, p, b)
-	if err := saveState(p, State{ActiveID: "a"}); err != nil {
+	if err := saveState(p, State{CodexAccountID: "a"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,13 +63,17 @@ func TestPrintHelpListCurrentAndUse(t *testing.T) {
 	if !strings.Contains(out, "primary") {
 		t.Fatalf("current=%q", out)
 	}
-	out = captureStdout(t, func() { handleUse(p, []string{"backup"}) })
+	out = captureStdout(t, func() {
+		if err := useAccount(p, []string{"backup"}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if !strings.Contains(out, "switched to backup") {
 		t.Fatalf("use=%q", out)
 	}
 	st, _ := loadState(p)
-	if st.ActiveID != "b" {
-		t.Fatalf("active=%q", st.ActiveID)
+	if st.CodexAccountID != "b" {
+		t.Fatalf("active=%q", st.CodexAccountID)
 	}
 }
 
@@ -134,7 +144,7 @@ func TestMainVersion(t *testing.T) {
 func TestHandleInitReportsAdoptionAndNoop(t *testing.T) {
 	p := makeTestPaths(t)
 
-	out := captureStdout(t, func() { handleInit(p) })
+	out := captureStdout(t, func() { handleInit(p, "") })
 	if !strings.Contains(out, "no existing Codex login") || !strings.Contains(out, "cx add NAME") {
 		t.Fatalf("init on unauthorized system=%q", out)
 	}
@@ -142,12 +152,12 @@ func TestHandleInitReportsAdoptionAndNoop(t *testing.T) {
 	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "me@example.com"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out = captureStdout(t, func() { handleInit(p) })
+	out = captureStdout(t, func() { handleInit(p, "") })
 	if !strings.Contains(out, "primary") || !strings.Contains(out, "me@example.com") {
 		t.Fatalf("init adoption=%q", out)
 	}
 
-	out = captureStdout(t, func() { handleInit(p) })
+	out = captureStdout(t, func() { handleInit(p, "") })
 	if !strings.Contains(out, "already manages accounts") {
 		t.Fatalf("repeat init=%q", out)
 	}

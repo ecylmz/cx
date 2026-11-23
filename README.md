@@ -1,99 +1,178 @@
 # cx
 
-A small Codex account switcher for macOS and Linux.
+A small account switcher for Codex and Antigravity on macOS and Linux.
 
-Add multiple ChatGPT accounts, switch between them, and see each account's live 5-hour and weekly quotas with reset times — without touching your Codex sessions, history, or config.
+Switch between accounts and see live quota and reset times in one dashboard.
 
-![cx dashboard](assets/cx-dashboard.svg)
+![cx dashboard with aligned quota columns for Antigravity and Codex](assets/cx-dashboard.svg)
 
 ## Install
 
-Requires the Codex CLI.
+Install the CLI for each provider you use. Antigravity support requires `agy` 1.5.14 or later.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ecylmz/cx/main/install.sh | sh
 ```
 
-This installs `cx` to `~/.local/bin` and imports your existing Codex login as an account named `primary` (if you have one). It leaves your shell startup files alone, with one exception: Omarchy reserves `cx` for Claude Code, so on an Omarchy machine the installer appends a small block to `~/.bashrc` that drops that alias — and says so when it does.
+The installer puts `cx` in `~/.local/bin`. If you have a Codex login, it imports that login as `primary`. On Omarchy, the installer updates `~/.bashrc` to remove the `cx` alias for Claude Code.
 
 ### Shell integration (optional)
 
-Recent Codex versions can keep a local app-server alive between sessions. While one is running, a bare `codex` may reattach to it and keep serving the account that was active when it started — so a switch you just made with `cx use` looks like it did nothing.
+Codex can reuse a local app server between sessions. If `codex` reconnects to an existing server after `cx use`, it can keep using the previous account.
 
-If you see that, add this to `~/.zshrc` or `~/.bashrc` for Zsh or Bash:
+If this happens, add the shell integration to `~/.zshrc` or `~/.bashrc`.
 
 ```sh
 eval "$(cx shell-init)"
 ```
 
-For Fish, add this to `~/.config/fish/config.fish`:
+For Fish, add the shell integration to `~/.config/fish/config.fish`.
 
 ```fish
 cx shell-init | source
 ```
 
-When you omit the shell argument, `cx shell-init` checks the process that started it, then `$SHELL`. If neither identifies Bash, Zsh, or Fish, it uses Bash/Zsh syntax. Pass `bash`, `zsh`, or `fish` to select the output explicitly, for example `cx shell-init fish | source`.
+If you omit the shell argument, `cx shell-init` looks at the process that started it, then at `$SHELL`. If neither identifies Bash, Zsh, or Fish, cx uses Bash or Zsh syntax. Pass `bash`, `zsh`, or `fish` to select the syntax.
 
-It defines a small `codex` shell function that passes one config override, which turns that reuse off so every new session reads the account cx selected. You can also pass the override by hand on the one run where it matters, instead of keeping a wrapper around:
+The shell function disables app server reuse so each new session reads the account that cx selected. You can also pass the same setting on a single run.
 
 ```sh
 codex -c 'cli_auth_credentials_store="file"'
 ```
 
-Most setups never hit the stale-session case, so cx does not install this for you and `cx doctor` does not complain when it is missing. Nothing else in cx depends on it — every switch already writes the credential store setting into `~/.codex/config.toml` and repoints `auth.json`.
+Each Codex account switch uses `$CODEX_HOME` or `~/.codex` if it is unset. cx sets the file credential store in `config.toml` and links `auth.json` to the selected account. `cx run` applies the selection in that directory before it starts Codex.
 
 ## Use
 
 ```sh
-cx              # dashboard: pick an account, see quotas
+cx              # open the dashboard
 cx add work     # add another account via Codex device auth
-cx use work     # switch account
-cx auto         # switch only if the current account ran out of quota
+cx use work     # activate work and set its subscription as the default
+cx auto         # choose an account by available quota
+cx run          # start the provider CLI with the default account
 ```
 
-That's it for daily use. Everything else:
+### Command reference
 
 ```sh
-cx status [NAME] [--json]   # live quota status for every account
-cx current                  # show active account
-cx list                     # list accounts, no network
-cx rename OLD NEW
-cx remove NAME
-cx relogin NAME             # refresh one account's credential
-cx doctor                   # verify files, symlink and credentials
-cx update                   # install latest release
+cx add [NAME] [--provider codex] [--subscription TIER] [--expect EMAIL]
+cx add NAME --provider agy [--subscription TIER]
+cx init [--provider codex] [--subscription TIER]
+cx init [NAME] --provider agy [--subscription TIER]
+cx use [NAME] [--provider PROVIDER] [--subscription TIER] [--resume]
+cx auto
+cx run [--provider PROVIDER] [ARGS...]
+cx status [NAME] [--provider PROVIDER] [--subscription TIER] [--json]
+cx current
+cx list
+cx rename OLD NEW [--provider PROVIDER]
+cx remove NAME [--provider PROVIDER]
+cx relogin NAME [--provider codex] [--expect EMAIL]
+cx doctor
+cx shell-init [bash|zsh|fish]
+cx update [--force]
 cx version
 ```
 
+### Dashboard
+
+The dashboard groups accounts by subscription. If you have one subscription, the dashboard shows a single list. If you have more than one, groups start open and appear in alphabetical order. A cyan bar marks the selected row. A green name marks the active account for each provider. Outside the selected row, the active account also has a green dot.
+
+Each account uses one row by default. The row shows the email address and the quota for Codex or Gemini Models. If the email address is unavailable, the row shows the account name. A blank line separates groups and follows each open group heading. The table shows one set of `5 hour`, `weekly`, and `banked` headings. The `↻` symbol marks the reset time.
+
+Press `m` on an Antigravity account to show its other model groups below the account row. Press `m` again to hide them.
+
+Press `Tab` to move to the next subscription. After the last subscription, `Tab` returns to the first.
+
+Press `Enter` on an account to activate it for its provider. Press `←` to fold the focused group. The folded heading shows its active account. Press `→` to unfold the group. You can also open it with `Enter`.
+
+Press `s` on an account to open its subscription menu. Select a tier and press `Enter` to save it in cx. Press `Esc` to cancel.
+
+With multiple subscriptions, press `d` to set the focused subscription as the default. That subscription supplies the account for `cx run`. It is also the first subscription that `cx auto` tries. Press `?` for all shortcuts.
+
+### Selecting accounts from the command line
+
+If an account name is unique, `cx use NAME` activates it and sets its subscription as the default. Add `--resume` to resume the selected account's last conversation.
+
+If the name matches more than one provider, add `--provider codex` or `--provider agy`. The same rule applies to `cx status`, `cx rename`, and `cx remove`. Before you remove an active account, switch to another account from the same provider.
+
+Run `cx use` to open the account picker. Add `--provider` or `--subscription` to filter the picker or `cx status`.
+
+Run `cx status` to see all accounts. For Antigravity accounts only, run `cx status --provider agy`.
+
+`cx list` marks the account for `cx run` with `*`. `cx status` marks that account with a green dot. In JSON output, that account has `"active": true`.
+
+### Subscription tiers
+
+A subscription combines a provider and a tier. For example, `Codex Plus` combines the provider `Codex` and the tier `Plus`. Each account belongs to one subscription. See the [dictionary](DICT.md).
+
+New Codex accounts default to Plus. New Antigravity accounts default to Pro. Use `--subscription` to choose another tier, such as `pro-100` for Codex or `ultra-100` for Antigravity.
+
+If you specify a tier and sign-in reports a different one, cx reports the mismatch before it saves the account. Some sign-ins provide limited subscription information.
+
+See [Codex pricing](https://chatgpt.com/codex/pricing/), [ChatGPT Pro tiers](https://help.openai.com/en/articles/9793128-about-chatgpt-pro-tiers), [Antigravity plans](https://antigravity.google/docs/plans/), and [Antigravity for Gemini Enterprise](https://antigravity.google/docs/enterprise/) for plan details.
+
+### Antigravity
+
+Antigravity account switching uses the login Keychain on macOS and Secret Service on Linux. On Linux, make sure that `secret-tool` (from libsecret) is installed and that your keyring is unlocked.
+
+If you already use Antigravity, run `cx init --provider agy` to register your current login as `primary`. For a different name, run `cx init NAME --provider agy`.
+
+To add another Google account, follow these steps.
+
+1. In an interactive terminal, run `cx add work --provider agy`. Use a different name for each Antigravity account.
+2. Open the Google sign-in URL that `agy` prints. Select the Google account you want to add.
+3. If Google gives you an authorization code, paste it into the same terminal.
+
+Each profile keeps a copy of its credentials for account switching and quota requests. After you sign in, cx activates the new account and makes its subscription the default.
+
+Close active Antigravity sessions before you switch. The system keyring entry is shared with other Antigravity apps on the same machine.
+
+```sh
+cx list                          # list registered accounts
+cx use work --provider agy       # activate work and make its subscription the default
+agy                              # start Antigravity with the active login
+cx use --provider agy            # open the picker for Antigravity accounts
+cx status work --provider agy    # show quota by model group
+```
+
+Each new `agy` session uses your usual Antigravity configuration and conversation history.
+
+The dashboard reads the Google email from the local Antigravity profile when it is available. Run `cx status NAME --provider agy` for the full quota details.
+
 ### Adding the right account
 
-If several ChatGPT accounts are signed into your browser, `--expect` is an optional safety check:
+If you use several ChatGPT accounts in your browser, pass the email address of the account you want to add.
 
 ```sh
 cx add work --expect you@example.com
 ```
 
-cx verifies the email that device auth actually returned and refuses to save the credential if it doesn't match. It also rejects adding an account that cx already manages under another name.
+If sign-in returns a different email address, cx rejects the credential. cx also rejects an account it already manages under another name.
 
 ### Automatic selection
 
-`cx auto` keeps the active account as long as it has quota left in every window reported by the server (5-hour, weekly, or both). Once a reported window runs out, it switches to the usable account with the *least* weekly quota remaining — spending the nearly-empty accounts first and keeping the fresh ones in reserve. It exits with status 1 without switching if every account is exhausted.
+`cx auto` starts with the default subscription. It keeps the active account if that account qualifies. If the active account lacks usable quota, cx tries the other accounts in that subscription first. If none qualify, cx tries other subscriptions. A switch makes the new account's subscription the default.
 
-A candidate whose quota cx cannot read — a stale credential, one slow response among the concurrent ones, an account the backend reports no Codex window for — is passed over rather than failing the whole selection, which is what it used to do. If passing them over leaves nothing usable, cx names each account it could not read instead of reporting an exhausted pool: only one of those two is fixed by waiting.
+Codex accounts need quota left in every reported window. Antigravity accounts need quota left in every reported window of at least one model group.
+
+For Antigravity, cx uses the usable model group with the most quota left for each account. Among the accounts that qualify, cx selects the account with the least quota left. Both comparisons use weekly quota first and 5-hour quota to break ties.
+
+If cx cannot read an account's quota, it skips that account. If no account qualifies, cx keeps the selection and exits with status 1.
 
 ### Quota windows
 
-Opening the dashboard starts any rolling quota window that hasn't started yet, by sending one minimal Codex request per account. This spends a handful of tokens so your 5-hour and weekly reset countdowns stay active. Accounts with no quota left are shown as `window not started · usage limit reached`. (`cx auto` never does this — it only reads.)
+The dashboard and `cx status` start unused Codex quota windows with a minimal request. This uses a few tokens. Antigravity quota reads and `cx auto` use read-only quota checks.
 
 ### Banked resets
 
-Accounts with banked rate-limit resets get a third meter line. Its bar is a fixed 30-day axis — the life of a banked reset — with a tick at each week, and every reset sits at the date it expires:
+The `banked` column shows how many Codex resets remain. If there is room, it shows the earliest known expiry and the time left. If any resets remain, press `b` for the full dates. `cx status` shows the dates and a 30-day timeline.
 
 ```
 banked  ─────┼●───┼────┼────┼─       1 left   next in 8d 23h
 ```
 
-The scale is the same on every account, so the lines can be read against each other. A pip turns yellow inside a week of expiring and red inside a day; a cell holding more than one reset is drawn `◉`. A reset the backend gives no expiry date for cannot be placed on the axis, so the count says so instead — `2 left · 1?` is two banked resets, one of them undated. Press `b` in the dashboard for the exact dates of every account, or run `cx status`, which always lists them in full.
+The timeline uses the same scale across Codex accounts. A mark turns yellow within a week of expiry and red within a day. A cell with more than one reset shows `◉`. In full output, `2 left · 1?` means that one of two resets has an unknown expiry date.
 
 ## Build from source
 

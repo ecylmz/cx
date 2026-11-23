@@ -11,13 +11,13 @@ import (
 	"time"
 )
 
-func TestSelectWeeklyWindowUsesLongest(t *testing.T) {
+func TestSelectCodexRateWindowsRecognizesWeeklyQuota(t *testing.T) {
 	a := int64(300)
 	b := int64(10080)
 	ra := int64(10)
 	rb := int64(20)
 	rr := rateResponse{RateLimits: rateSnapshot{Primary: &rateWindow{UsedPercent: 5, WindowDurationMins: &a, ResetsAt: &ra}, Secondary: &rateWindow{UsedPercent: 60, WindowDurationMins: &b, ResetsAt: &rb}}}
-	w, err := selectWeeklyWindow(rr)
+	_, w, err := selectCodexRateWindows(rr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +25,7 @@ func TestSelectWeeklyWindowUsesLongest(t *testing.T) {
 		t.Fatalf("got %v", w.UsedPercent)
 	}
 }
+
 func TestParseAuthIdentity(t *testing.T) {
 	dir := t.TempDir()
 	payload := map[string]any{"email": "a@example.com", "https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct", "chatgpt_plan_type": "plus"}}
@@ -33,12 +34,12 @@ func TestParseAuthIdentity(t *testing.T) {
 	auth := map[string]any{"tokens": map[string]any{"id_token": tok, "access_token": "access", "refresh_token": "refresh"}}
 	raw, _ := json.Marshal(auth)
 	p := filepath.Join(dir, "auth.json")
-	_ = os.WriteFile(p, raw, 0600)
+	_ = os.WriteFile(p, raw, 0o600)
 	id, err := parseAuth(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id.AccountID != "acct" || id.Email != "a@example.com" || id.Plan != "plus" {
+	if id.AccountID != "acct" || id.Email != "a@example.com" || id.Tier != "plus" {
 		t.Fatalf("bad identity: %+v", id)
 	}
 }
@@ -62,14 +63,14 @@ func TestSameIDAndReadResponse(t *testing.T) {
 	}
 }
 
-func TestSelectWeeklyWindowFallbacks(t *testing.T) {
-	if _, err := selectWeeklyWindow(rateResponse{}); err == nil {
+func TestSelectCodexRateWindowsUsesCodexSnapshot(t *testing.T) {
+	if _, _, err := selectCodexRateWindows(rateResponse{}); err == nil {
 		t.Fatal("expected no-window error")
 	}
 	mins := int64(10080)
 	reset := int64(123)
 	rr := rateResponse{RateLimitsByLimitID: map[string]rateSnapshot{"codex": {Primary: &rateWindow{UsedPercent: 42, WindowDurationMins: &mins, ResetsAt: &reset}}}}
-	w, err := selectWeeklyWindow(rr)
+	_, w, err := selectCodexRateWindows(rr)
 	if err != nil || w.UsedPercent != 42 {
 		t.Fatalf("window=%+v err=%v", w, err)
 	}
@@ -79,18 +80,28 @@ func TestAnnotateAndRememberWeeklyReset(t *testing.T) {
 	p := makeTestPaths(t)
 	a := Account{ID: "a", Name: "primary", AccountID: "acct"}
 	writeTestAccount(t, p, a)
+	if err := changeSubscription(p, a, "pro-100"); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	r := UsageResult{Account: a, Usage: WeeklyUsage{UsedPercent: 10, ResetsAt: now.Add(24 * time.Hour).Unix(), FetchedAt: now}}
 	annotateWindowState(p, &r)
 	if !r.Usage.WindowStarted || r.Account.WeeklyResetAt != r.Usage.ResetsAt {
 		t.Fatalf("annotated=%+v", r)
 	}
+	var stored Account
+	if err := readJSON(p.accountMeta(a.ID), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.subscription().tier() != "pro-100" || stored.WeeklyResetAt != r.Usage.ResetsAt || r.Account.subscription() != codexPlus {
+		t.Fatalf("the refresh should save the reset without changing the stored tier or moving the current row: stored=%+v, result=%+v", stored, r.Account)
+	}
 	before := r.Account.UpdatedAt
-	got, err := rememberWeeklyReset(p, r.Account, r.Account.WeeklyResetAt)
+	got, err := rememberQuotaResets(p, r.Account, r.Account.WeeklyResetAt, 0)
 	if err != nil || got.WeeklyResetAt != r.Account.WeeklyResetAt || !got.UpdatedAt.Equal(before) {
 		t.Fatalf("same reset=%+v err=%v", got, err)
 	}
-	got, err = rememberWeeklyReset(p, got, 0)
+	got, err = rememberQuotaResets(p, got, 0, 0)
 	if err != nil || got.WeeklyResetAt == 0 {
 		t.Fatalf("zero reset changed account: %+v err=%v", got, err)
 	}

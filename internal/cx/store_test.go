@@ -39,7 +39,7 @@ func TestAtomicWriteAndJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0600 {
+	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode=%o", st.Mode().Perm())
 	}
 }
@@ -80,10 +80,10 @@ func TestListAccountsSortingStateAndCache(t *testing.T) {
 	writeTestAccount(t, p, Account{ID: "a", Name: "alpha", AccountID: "acct-a", LastUsedAt: &old})
 	writeTestAccount(t, p, Account{ID: "b", Name: "beta", AccountID: "acct-b", LastUsedAt: &newer})
 	writeTestAccount(t, p, Account{ID: "c", Name: "charlie", AccountID: "acct-c"})
-	if err := os.MkdirAll(filepath.Join(p.AccountsRoot, ".staging"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(p.AccountsRoot, ".staging"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(p.AccountsRoot, "broken"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(p.AccountsRoot, "broken"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	as, err := listAccounts(p)
@@ -93,16 +93,16 @@ func TestListAccountsSortingStateAndCache(t *testing.T) {
 	if len(as) != 3 || as[0].ID != "b" || as[1].ID != "a" || as[2].ID != "c" {
 		t.Fatalf("order=%+v", as)
 	}
-	if err := saveState(p, State{ActiveID: "b"}); err != nil {
+	if err := saveState(p, State{CodexAccountID: "b"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := loadState(p)
-	if err != nil || st.ActiveID != "b" {
+	if err != nil || st.CodexAccountID != "b" {
 		t.Fatalf("state=%+v err=%v", st, err)
 	}
 	missing := makeTestPaths(t)
 	st, err = loadState(missing)
-	if err != nil || st.ActiveID != "" {
+	if err != nil || st.CodexAccountID != "" {
 		t.Fatalf("missing state=%+v err=%v", st, err)
 	}
 
@@ -124,23 +124,28 @@ func TestRenameAndRemoveAccount(t *testing.T) {
 	b := Account{ID: "b", Name: "beta", AccountID: "acct-b", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	writeTestAccount(t, p, a)
 	writeTestAccount(t, p, b)
-	if err := renameAccount(p, "alpha", "renamed"); err != nil {
+	writeTestAccount(t, p, Account{ID: "c", Name: "renamed", Subscription: agyPro})
+	if err := renameAccount(p, "alpha", "renamed", nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := findAccount(p, "renamed")
+	codex := providerCodex
+	got, err := findAccount(p, "renamed", &codex)
 	if err != nil || got.ID != "a" {
 		t.Fatalf("renamed=%+v err=%v", got, err)
 	}
-	if err := renameAccount(p, "renamed", "beta"); err == nil {
+	if err := renameAccount(p, "renamed", "beta", &codex); err == nil {
 		t.Fatal("expected name collision")
 	}
-	if err := saveState(p, State{ActiveID: "a"}); err != nil {
+	if err := saveState(p, State{CodexAccountID: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeAccount(p, "renamed"); err == nil {
+	if err := removeAccount(p, "renamed", nil); err == nil || !strings.Contains(err.Error(), "--provider") {
+		t.Fatalf("expected provider choice before removing renamed, got %v", err)
+	}
+	if err := removeAccount(p, "renamed", &codex); err == nil {
 		t.Fatal("expected active-account removal rejection")
 	}
-	if err := removeAccount(p, "beta"); err != nil {
+	if err := removeAccount(p, "beta", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(p.accountDir("b")); !os.IsNotExist(err) {

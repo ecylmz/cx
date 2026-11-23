@@ -8,7 +8,7 @@ import (
 
 func TestFetchUsageDirectUsesCodexBackendContract(t *testing.T) {
 	p := makeTestPaths(t)
-	a := Account{ID: "a", Name: "primary", AccountID: "acct", Plan: "plus"}
+	a := Account{ID: "a", Name: "primary", AccountID: "acct", Subscription: codexPlus}
 	writeTestAccount(t, p, a)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,31 +42,15 @@ func TestFetchUsageDirectUsesCodexBackendContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Plan != "free" || five == nil {
+	if a.subscription() != codexPlus || five == nil {
 		t.Fatalf("account=%+v five=%+v", a, five)
 	}
 	var saved Account
-	if err := readJSON(p.accountMeta(a.ID), &saved); err != nil || saved.Plan != "free" {
+	if err := readJSON(p.accountMeta(a.ID), &saved); err != nil || saved.subscription() != codexPlus {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 	if u.UsedPercent != 37 || u.WindowMinutes != 10080 || u.ResetsAt != 200 || !u.Fresh {
 		t.Fatalf("usage=%+v", u)
-	}
-}
-
-func TestSelectDirectWeeklyWindowIncludesAdditionalLimits(t *testing.T) {
-	payload := directUsagePayload{
-		RateLimit: &directRateLimit{PrimaryWindow: &directRateWindow{UsedPercent: 1, LimitWindowSeconds: 300}},
-		AdditionalRateLimits: []directAdditionalRateLimit{{
-			RateLimit: &directRateLimit{SecondaryWindow: &directRateWindow{UsedPercent: 9, LimitWindowSeconds: 604800, ResetAt: 123}},
-		}},
-	}
-	w, err := selectDirectWeeklyWindow(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.UsedPercent != 9 || w.ResetAt != 123 {
-		t.Fatalf("window=%+v", w)
 	}
 }
 
@@ -87,7 +71,7 @@ func TestFetchUsageDoesNotRequireCodexWhenDirectReadWorks(t *testing.T) {
 	}()
 	t.Setenv("PATH", t.TempDir())
 
-	u, err := fetchUsage(p, a)
+	_, u, err := fetchUsagePair(p, &a)
 	if err != nil {
 		t.Fatal(err)
 	}
