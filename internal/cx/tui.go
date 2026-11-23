@@ -81,6 +81,10 @@ func (v dashboardView) folded(p provider) bool {
 	return v.hasProviderGroups() && v.foldedGroups[p]
 }
 
+func (v dashboardView) showDefaultHint(sel int) bool {
+	return sel >= 0 && sel < len(v.accounts) && v.folded(v.accounts[sel].Provider)
+}
+
 func (v dashboardView) groupStart(i int) bool {
 	return i == 0 || v.accounts[i-1].Provider != v.accounts[i].Provider
 }
@@ -557,7 +561,7 @@ func renderDashboardFrame(v dashboardView) (string, dashboardLayout) {
 	// The footer row stays present even when there is nothing to say, so the
 	// frame does not lose a line — and jump — the moment a refresh finishes.
 	foot := []string{
-		dim(dashboardKeys(v.results, v.size.cols)),
+		dim(dashboardKeys(v.results, v.size.cols, v.showDefaultHint(v.sel))),
 		dim(" " + v.footer),
 	}
 
@@ -776,7 +780,7 @@ type keyHint struct {
 // which is where the key that gets you out lives, so hints are dropped from the
 // line deliberately: the niche screen first, then the keys a terminal user tries
 // anyway. What survives always ends with the full key list and quit.
-func dashboardKeys(results []UsageResult, cols int) string {
+func dashboardKeys(results []UsageResult, cols int, showDefaultHint bool) string {
 	hints := []keyHint{
 		{"↑/↓ or j/k select", 2},
 		{"enter switch", 1},
@@ -789,7 +793,10 @@ func dashboardKeys(results []UsageResult, cols int) string {
 	}
 	if len(results) > 1 && results[0].Account.Provider != results[len(results)-1].Account.Provider {
 		hints[1].text = "enter open/activate"
-		hints = append(hints, keyHint{"←/→ fold/open", 3}, keyHint{"d set default", 1})
+		hints = append(hints, keyHint{"←/→ fold/open", 3})
+		if showDefaultHint {
+			hints = append(hints, keyHint{"d set default", 1})
+		}
 	}
 	hints = append(hints, keyHint{"? keys", 0}, keyHint{"q quit", 0})
 
@@ -831,11 +838,11 @@ func renderHelpScreen(size termSize, banked, grouped bool) string {
 		keys[4][1] = "open a group or activate an account"
 		keys = append(keys,
 			[2]string{"← / →", "fold / open the provider group"},
-			[2]string{"d", "set the default provider"},
+			[2]string{"d", "set the provider under the cursor as default"},
 		)
 	}
 	if banked {
-		keys = append(keys, [2]string{"b", "banked reset dates, every account"})
+		keys = append(keys, [2]string{"b", "show Codex banked reset dates"})
 	}
 	keys = append(keys,
 		[2]string{"?", "this screen"},
@@ -1038,15 +1045,15 @@ func writeFullFrame(frame string) {
 // selectionUpdateString repaints just the two account blocks a cursor move
 // touched — the one that lost the gutter bar and the one that gained it. A block
 // keeps its line count whichever way it is drawn, so the rows below it do not
-// move. It returns "" whenever the absolute rows cannot be trusted — a frame
-// taller than the screen has scrolled, and a scrolled-out account has no row at
-// all — and the caller then redraws the whole frame instead.
+// move. The caller redraws the full frame if either row is off screen, the
+// frame has scrolled, or the cursor move changes the footer.
 func selectionUpdateString(v dashboardView, oldSel, newSel int, layout dashboardLayout) string {
 	rows := layout.headerRows
 	if !layout.fits || oldSel < 0 || newSel < 0 ||
 		oldSel >= len(v.results) || newSel >= len(v.results) ||
 		oldSel >= len(rows) || newSel >= len(rows) ||
-		rows[oldSel] < 0 || rows[newSel] < 0 {
+		rows[oldSel] < 0 || rows[newSel] < 0 ||
+		v.showDefaultHint(oldSel) != v.showDefaultHint(newSel) {
 		return ""
 	}
 	v.sel = newSel

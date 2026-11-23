@@ -416,7 +416,7 @@ func TestFooterGivesUpHintsRatherThanTheQuitKey(t *testing.T) {
 	}
 
 	for _, cols := range []int{100, 74, 73, 64, 50, 30, 20} {
-		line := dashboardKeys(v.results, cols)
+		line := dashboardKeys(v.results, cols, false)
 		if got := visibleCells(line); cols >= 20 && got > cols {
 			t.Fatalf("cols=%d: footer is %d cells and would be cut: %q", cols, got, line)
 		}
@@ -425,7 +425,7 @@ func TestFooterGivesUpHintsRatherThanTheQuitKey(t *testing.T) {
 		}
 	}
 	// The niche screen is the first hint given up, not the last.
-	if wide, tight := dashboardKeys(v.results, 100), dashboardKeys(v.results, 73); !strings.Contains(wide, "b banked") || strings.Contains(tight, "b banked") {
+	if wide, tight := dashboardKeys(v.results, 100, false), dashboardKeys(v.results, 73, false); !strings.Contains(wide, "b banked") || strings.Contains(tight, "b banked") {
 		t.Fatalf("wide=%q tight=%q", wide, tight)
 	}
 }

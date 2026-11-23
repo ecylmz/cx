@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="912" height="444" viewBox="0 0 912 444"
-     role="img" aria-label="the cx dashboard: three accounts with their 5-hour, weekly and banked quotas"
+     role="img" aria-label="cx dashboard with three Codex accounts, an active account, and a separate cursor"
      font-family="'JetBrains Mono','JetBrainsMono Nerd Font','SF Mono',SFMono-Regular,ui-monospace,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace" font-size="16px" fill="#c9d1d9"
      style="font-variant-ligatures:none">
 <defs>
@@ -43,43 +43,43 @@
   <text x="404" y="158.6" textLength="57.6">2 left</text>
   <text x="490.4" y="158.6" textLength="144" fill="#8b949e">next in 12d 18h</text>
   <rect x="29.6" y="184.4" width="4.8" height="72.8" fill="#58a6ff" shape-rendering="crispEdges"/>
-  <circle cx="44" cy="192" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
-  <text x="58.4" y="197" textLength="38.4" fill="#58a6ff" font-weight="600">work</text>
+  <circle cx="44" cy="192" r="3.1" fill="none" stroke="#c9d1d9" stroke-width="1.3"/>
+  <text x="58.4" y="197" textLength="38.4">work</text>
   <text x="240.8" y="197" textLength="28.8">pro</text>
-  <text x="346.4" y="197" textLength="153.6" fill="#8b949e">work@example.com</text>
+  <text x="346.4" y="197" textLength="153.6">work@example.com</text>
   <text x="48.8" y="216.2" textLength="57.6">5 hour</text>
   <rect x="125.6" y="203.45" width="211.2" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
-  <text x="356" y="216.2" textLength="105.6" fill="#3fb950">100.0% left</text>
-  <text x="490.4" y="216.2" textLength="336" fill="#8b949e">not started · starts with Codex use</text>
+  <text x="356" y="216.2" textLength="105.6">100.0% left</text>
+  <text x="490.4" y="216.2" textLength="336">not started · starts with Codex use</text>
   <text x="48.8" y="235.4" textLength="57.6">weekly</text>
   <rect x="125.6" y="222.65" width="124.8" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
   <rect x="250.4" y="222.65" width="86.4" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="235.4" textLength="96" fill="#3fb950">61.0% left</text>
-  <text x="490.4" y="235.4" textLength="326.4" fill="#8b949e">resets 10.09.2026 18:39 · in 4d 2h</text>
+  <text x="365.6" y="235.4" textLength="96">61.0% left</text>
+  <text x="490.4" y="235.4" textLength="326.4">resets 10.09.2026 18:39 · in 4d 2h</text>
   <text x="48.8" y="254.6" textLength="57.6">banked</text>
-  <line x1="125.6" y1="249.6" x2="336.8" y2="249.6" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="178.4" y1="244.4" x2="178.4" y2="254.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="226.4" y1="244.4" x2="226.4" y2="254.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="274.4" y1="244.4" x2="274.4" y2="254.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="322.4" y1="244.4" x2="322.4" y2="254.8" stroke="#8b949e" stroke-width="1.1"/>
-  <circle cx="149.6" cy="249.6" r="3.5" fill="#d29922"/>
+  <line x1="125.6" y1="249.6" x2="336.8" y2="249.6" stroke="#c9d1d9" stroke-width="1.1"/>
+  <line x1="178.4" y1="244.4" x2="178.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
+  <line x1="226.4" y1="244.4" x2="226.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
+  <line x1="274.4" y1="244.4" x2="274.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
+  <line x1="322.4" y1="244.4" x2="322.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
+  <circle cx="149.6" cy="249.6" r="3.5" fill="#c9d1d9"/>
   <circle cx="188" cy="249.6" r="3.5" fill="#c9d1d9"/>
   <circle cx="255.2" cy="249.6" r="3.5" fill="#c9d1d9"/>
   <text x="404" y="254.6" textLength="57.6">3 left</text>
-  <text x="490.4" y="254.6" textLength="124.8" fill="#8b949e">next in 3d 5h</text>
+  <text x="490.4" y="254.6" textLength="124.8">next in 3d 5h</text>
   <circle cx="44" cy="288" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
-  <text x="58.4" y="293" textLength="57.6" font-weight="600">backup</text>
-  <text x="240.8" y="293" textLength="38.4">plus</text>
+  <text x="58.4" y="293" textLength="57.6" fill="#8b949e">backup</text>
+  <text x="240.8" y="293" textLength="38.4" fill="#8b949e">plus</text>
   <text x="346.4" y="293" textLength="172.8" fill="#8b949e">backup@example.com</text>
-  <text x="48.8" y="312.2" textLength="57.6">5 hour</text>
-  <rect x="125.6" y="299.45" width="9.6" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
+  <text x="48.8" y="312.2" textLength="57.6" fill="#8b949e">5 hour</text>
+  <rect x="125.6" y="299.45" width="9.6" height="15.5" fill="#8b949e" shape-rendering="crispEdges"/>
   <rect x="135.2" y="299.45" width="201.6" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="375.2" y="312.2" textLength="86.4" fill="#f85149">6.0% left</text>
+  <text x="375.2" y="312.2" textLength="86.4" fill="#8b949e">6.0% left</text>
   <text x="490.4" y="312.2" textLength="307.2" fill="#8b949e">resets 06.09.2026 16:20 · in 40m</text>
-  <text x="48.8" y="331.4" textLength="57.6">weekly</text>
-  <rect x="125.6" y="318.65" width="38.4" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
+  <text x="48.8" y="331.4" textLength="57.6" fill="#8b949e">weekly</text>
+  <rect x="125.6" y="318.65" width="38.4" height="15.5" fill="#8b949e" shape-rendering="crispEdges"/>
   <rect x="164" y="318.65" width="172.8" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="331.4" textLength="96" fill="#f85149">17.0% left</text>
+  <text x="365.6" y="331.4" textLength="96" fill="#8b949e">17.0% left</text>
   <text x="490.4" y="331.4" textLength="345.6" fill="#8b949e">resets 07.09.2026 12:19 · in 20h 39m</text>
   <text x="29.6" y="369.8" textLength="163.2" fill="#8b949e">↑/↓ or j/k select</text>
   <text x="221.6" y="369.8" textLength="115.2" fill="#8b949e">enter switch</text>

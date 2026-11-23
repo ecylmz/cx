@@ -344,3 +344,33 @@ func TestSingleProviderDashboardIsFlat(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardDefaultHintFollowsFoldedFocus(t *testing.T) {
+	agy := Account{ID: "agy", Name: "work", Provider: providerAgy}
+	codex := Account{ID: "codex", Name: "primary"}
+	v := dashboardView{
+		accounts:     []Account{agy, codex},
+		results:      []UsageResult{{Account: agy}, {Account: codex}},
+		foldedGroups: map[provider]bool{providerCodex: true},
+		size:         termSize{rows: 30, cols: 120},
+	}
+	frame, layout := renderDashboardFrame(v)
+	if strings.Contains(frame, "d set default") {
+		t.Fatalf("the hint appeared while focused on an account: %q", frame)
+	}
+	for _, move := range []struct {
+		key  string
+		show bool
+	}{{"down", true}, {"up", false}, {"left", true}, {"right", false}} {
+		frame := captureStdout(t, func() {
+			action, next := applyKey(&v, move.key, layout, false)
+			if action != "" {
+				t.Fatalf("%s action = %q", move.key, action)
+			}
+			layout = next
+		})
+		if !strings.Contains(frame, "q quit") || strings.Contains(frame, "d set default") != move.show {
+			t.Fatalf("%s should redraw the footer with default hint=%v: %q", move.key, move.show, frame)
+		}
+	}
+}

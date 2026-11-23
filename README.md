@@ -4,7 +4,7 @@ A small account switcher for Codex and Antigravity on macOS and Linux.
 
 Switch between accounts and see live quota and reset times in one dashboard.
 
-![cx dashboard](assets/cx-dashboard.svg)
+![cx dashboard with Codex as the only provider](assets/cx-dashboard.svg)
 
 ## Install
 
@@ -40,31 +40,49 @@ It defines a small `codex` shell function that passes one config override, which
 codex -c 'cli_auth_credentials_store="file"'
 ```
 
-Most setups never hit the stale-session case, so cx does not install this for you and `cx doctor` does not complain when it is missing. Nothing else in cx depends on it — every switch already writes the credential store setting into `~/.codex/config.toml` and repoints `auth.json`.
+Each Codex account switch sets the file credential store in `~/.codex/config.toml` and repoints `auth.json`. The optional wrapper disables implicit app-server reuse.
 
 ## Use
 
 ```sh
 cx              # dashboard: pick an account, see quotas
 cx add work     # add another account via Codex device auth
-cx use work     # switch account
+cx use work     # activate the Codex account and make Codex the default provider
 cx auto         # choose an account by available quota
-cx run          # start the agent for the selected account
+cx run          # start the default provider with its active account
 ```
 
-That's it for daily use. Everything else:
+### Command reference
 
 ```sh
-cx status [NAME] [--json]   # live quota status for every account
-cx current                  # show the account for cx run
-cx list                     # list accounts, no network
-cx rename OLD NEW
-cx remove NAME
-cx relogin NAME             # refresh one account's credential
-cx doctor                   # verify files, symlink and credentials
-cx update                   # install latest release
+cx status [PROVIDER/][NAME] [--json] # show quotas for all accounts or a selection
+cx current                           # show the account for cx run
+cx list                              # list accounts without network access
+cx rename [PROVIDER/]OLD NEW
+cx remove [PROVIDER/]NAME
+cx relogin NAME [--expect EMAIL]     # refresh a Codex account's credentials
+cx doctor                            # report issues with the Codex CLI and credentials
+cx update                            # install the latest release
 cx version
 ```
+
+### Dashboard
+
+With one provider, the dashboard lists its accounts directly. With multiple providers, all groups start open and appear in alphabetical order by provider name. A green dot marks each provider's active account. The cyan bar marks the cursor.
+
+Press `Enter` on an account to activate it for its provider. Press `←` to fold the group under the cursor. The folded heading shows its active account. Press `→` or `Enter` to open the group.
+
+With multiple providers, use `d` to select the default provider separately. Press `d` on a provider's account or folded heading. The heading shows `default` for the provider that `cx run` launches and `cx auto` tries first. The footer can show `d set default` only while the cursor is on a folded heading. Press `?` to see all shortcuts.
+
+### Selecting accounts from the command line
+
+If you omit the account name from `cx use`, cx opens the account picker. Use `cx use agy/` or `cx use codex/` to limit the picker to one provider. When you confirm the choice in the picker, cx activates the account and sets its provider as the default.
+
+If you provide an account name, cx makes both changes immediately. Add `--resume` to resume the selected account's last conversation.
+
+Use `agy/NAME` or `codex/NAME` with `cx use`, `cx status`, `cx rename`, or `cx remove`. A plain name targets Codex. Run `cx status agy/` for all Antigravity accounts or `cx status` for all accounts.
+
+`cx list` marks the account for `cx run` with `*`. `cx status` marks that account with a green dot. In JSON output, that account has `"active": true`.
 
 ### Antigravity
 
@@ -80,23 +98,15 @@ Each new profile has its own home directory, credentials, configuration, and con
 
 ```sh
 cx list               # list registered accounts
-cx use agy/work       # select work
-cx use agy/           # pick an Antigravity account
+cx use agy/work       # activate work and make Antigravity the default provider
+cx use agy/           # pick an Antigravity account, then confirm to set the default
 cx status agy/work    # show quota by model group
-cx run                # start the agent for the selected account
+cx run                # start the default provider with its active account
 ```
 
-Use `cx agy run` to start the last selected Antigravity profile directly. Use `cx agy help` to list the Antigravity commands.
-
-The dashboard lists one provider's accounts directly. If you use more than one provider, it opens groups in alphabetical order by provider name. A green dot marks each provider's active account. Press Enter on an account to activate it for that provider.
-
-Press `d` on a group or one of its accounts to set the default provider for `cx run` and `cx auto`. The group heading shows `default`.
-
-Press the left arrow to fold the group under the cursor. The folded heading shows the active account. Press the right arrow or Enter to open the group.
+Use `cx agy run` to start Antigravity with its active account, regardless of the default provider. Use `cx agy help` to list the Antigravity commands.
 
 The dashboard shows one row per Antigravity model group. The columns show the remaining 5-hour and weekly quotas. A wide terminal also shows the time until reset. Run `cx status agy/NAME` for the full quota details.
-
-Use `agy/NAME` or `codex/NAME` to select an account by provider. A name without a prefix selects a Codex account. The same prefixes work with `cx status`, `cx rename`, and `cx remove`.
 
 ### Adding the right account
 
@@ -110,25 +120,27 @@ cx verifies the email that device auth actually returned and refuses to save the
 
 ### Automatic selection
 
-`cx auto` starts with the default provider. It keeps that provider's active account while it has quota. If necessary, cx looks for another account from the same provider. It tries the other provider only if the first provider has no usable account.
+`cx auto` starts with the default provider. It keeps the active account if that account qualifies. If the active account lacks usable quota, cx looks for another account from the same provider. If no account there qualifies, cx tries the other provider. If cx switches providers, the new provider becomes the default.
 
-Codex requires quota in every reported window. Antigravity requires quota in every reported window of at least one model group. For each usable account, cx ranks its best available group by weekly quota and then by 5-hour quota. It selects the account with the least remaining quota.
+Codex accounts need quota left in every reported window. Antigravity accounts need quota left in every reported window of at least one model group.
+
+For Antigravity, cx uses the usable model group with the most quota left for each account. Among the accounts that qualify, cx selects the account with the least quota left. Both comparisons use weekly quota first and 5-hour quota to break ties.
 
 If cx cannot read an account's quota, it skips that account. If no account qualifies, cx keeps the selection and exits with status 1.
 
 ### Quota windows
 
-Opening the dashboard starts unused Codex quota windows with one minimal request per account. This uses a few tokens. Antigravity quota reads and `cx auto` use read-only quota checks.
+The dashboard and `cx status` start unused Codex quota windows with a minimal request. This uses a few tokens. Antigravity quota reads and `cx auto` use read-only quota checks.
 
 ### Banked resets
 
-Accounts with banked rate-limit resets get a third meter line. Its bar is a fixed 30-day axis — the life of a banked reset — with a tick at each week, and every reset sits at the date it expires:
+Codex accounts with banked rate-limit resets get a third meter line. The line shows 30 days with a tick at each week. Each reset appears at its expiry date.
 
 ```
 banked  ─────┼●───┼────┼────┼─       1 left   next in 8d 23h
 ```
 
-The scale is the same on every account, so the lines can be read against each other. A pip turns yellow inside a week of expiring and red inside a day; a cell holding more than one reset is drawn `◉`. A reset the backend gives no expiry date for cannot be placed on the axis, so the count says so instead — `2 left · 1?` is two banked resets, one of them undated. Press `b` in the dashboard for the exact dates of every account, or run `cx status`, which always lists them in full.
+The scale is the same across Codex accounts. On the active account, a pip turns yellow within a week of expiry and red within a day. A cell with more than one reset shows `◉`. The count `2 left · 1?` means that one of two resets has an unknown expiry date. Press `b` in the dashboard or run `cx status` to see the exact dates.
 
 ## Build from source
 

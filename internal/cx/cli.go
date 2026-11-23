@@ -144,7 +144,7 @@ func Main() {
 		handleCurrent(p)
 	case "rename":
 		if len(args) != 3 {
-			fatal(errors.New("usage: cx rename OLD NEW"))
+			fatal(errors.New("usage: cx rename [PROVIDER/]OLD NEW"))
 		}
 		which, name, err := parseAccountSelector(args[1], providerCodex)
 		if err != nil {
@@ -156,7 +156,7 @@ func Main() {
 		fmt.Printf("%s renamed %s → %s\n", green("✓"), args[1], args[2])
 	case "remove", "rm":
 		if len(args) != 2 {
-			fatal(errors.New("usage: cx remove NAME"))
+			fatal(errors.New("usage: cx remove [PROVIDER/]NAME"))
 		}
 		which, name, err := parseAccountSelector(args[1], providerCodex)
 		if err != nil {
@@ -280,9 +280,9 @@ func handleStatus(p paths, args []string) int {
 }
 
 func handleProviderStatus(p paths, args []string, which provider) int {
-	command := "cx status"
+	usage := "cx status [PROVIDER/][NAME] [--json]"
 	if which == providerAgy {
-		command = "cx agy status"
+		usage = "cx agy status [NAME] [--json]"
 	}
 	jsonOut := false
 	name := ""
@@ -293,7 +293,7 @@ func handleProviderStatus(p paths, args []string, which provider) int {
 		case name == "":
 			name = a
 		default:
-			fatal(errors.New("usage: " + command + " [NAME] [--json]"))
+			fatal(errors.New("usage: " + usage))
 		}
 	}
 	var accounts []Account
@@ -429,27 +429,35 @@ func printHelp() {
 	fmt.Print(`cx — Codex and Antigravity account switcher
 
 Usage:
-  cx                                 live quota dashboard; starts unused windows
-  cx status [[PROVIDER/]NAME] [--json]
-                                     live quota status
+  cx                                 live dashboard; starts unused Codex windows
+  cx status [PROVIDER/][NAME] [--json]
+                                     show live quotas for all accounts or a selection
   cx add [NAME] [--expect EMAIL]     add an account with Codex device auth
   cx init                            import an existing Codex login as "primary"
-  cx relogin NAME [--expect EMAIL]   refresh one account's credential safely
+  cx relogin NAME [--expect EMAIL]   refresh a Codex account's credentials
   cx use [PROVIDER/][NAME] [--resume]
-                                     switch account; pick if NAME is omitted
+                                     activate an account and set its provider as default
   cx auto                            select an account, starting with the default provider
-  cx run [ARGS...]                   launch the active agent
+  cx run [ARGS...]                   launch the default provider with its active account
   cx agy help                        show Antigravity account commands
-  cx current                         show the active account
+  cx current                         show the account for cx run
   cx list                            list accounts without network access
-  cx rename OLD NEW                  rename an account
-  cx remove|rm NAME                  remove an account and its credential
-  cx doctor                          check codex, credential store, and accounts
+  cx rename [PROVIDER/]OLD NEW        rename an account
+  cx remove|rm [PROVIDER/]NAME        remove an account and its credential
+  cx doctor                          check the Codex CLI, credential store, and accounts
   cx shell-init [bash|zsh|fish]       print the optional Codex shell wrapper
   cx update [--force]                install the latest GitHub release
   cx version                         print the cx version
 
 Notes:
+  A plain account name targets Codex. Use agy/NAME to target Antigravity.
+  Omit NAME with 'cx use' to open the picker. Use 'cx use agy/' to show
+  Antigravity accounts, or 'cx use codex/' to show Codex accounts.
+
+  In the dashboard, Enter activates an account for its provider. With multiple
+  providers, d sets the provider under the cursor as default. The footer
+  shows this shortcut on a folded group. Press ? for all shortcuts.
+
   'cx shell-init' checks its parent process, then $SHELL, for bash, zsh, or fish.
   If neither is recognized, it prints Bash/Zsh syntax. Pass a shell name to
   select the output explicitly.

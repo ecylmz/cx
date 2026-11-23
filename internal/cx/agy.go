@@ -21,7 +21,7 @@ func handleAgy(p paths, args []string) error {
 		fmt.Print(`Usage:
   cx agy init [NAME]                add the existing agy login (default: primary)
   cx agy add NAME                   sign in to an isolated Google account
-  cx agy use [NAME] [--resume]       select an Antigravity account
+  cx agy use [NAME] [--resume]       activate an account and make Antigravity the default
   cx agy status [NAME] [--json]     show Antigravity quotas
   cx agy rename OLD NEW             rename an Antigravity account
   cx agy remove NAME                remove an Antigravity account

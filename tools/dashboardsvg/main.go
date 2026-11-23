@@ -153,11 +153,11 @@ func (c *canvas) run(row, col int, s, fill string, bold bool) {
 
 // bar is a quota meter: the filled cells and the dimmed track behind them, in
 // the same proportion barCells rounds a percentage to.
-func (c *canvas) bar(row, col int, percent float64) {
+func (c *canvas) bar(row, col int, percent float64, fill string) {
 	n := int(clamp(percent, 0, 100)/100*barCells + 0.5)
 	y := yTop(row) + (cellH-barH)/2
 	if n > 0 {
-		c.rect(x(col), y, float64(n)*cellW, barH, fg)
+		c.rect(x(col), y, float64(n)*cellW, barH, fill)
 	}
 	if n < barCells {
 		c.rect(x(col+n), y, float64(barCells-n)*cellW, barH, track)
@@ -180,30 +180,34 @@ type pip struct {
 // axis draws the banked line: the 30-day rule, a tick on each week boundary, and
 // a dot per reset. Drawn as one rule rather than a cell of ─ each, so the axis
 // cannot come out dashed on a reader whose font sets that glyph short.
-func (c *canvas) axis(row, col int, ticks []int, pips []pip) {
+func (c *canvas) axis(row, col int, ticks []int, pips []pip, lineColor, pipColor string) {
 	mid := yTop(row) + cellH/2
 	fmt.Fprintf(&c.b, "  <line x1=%q y1=%q x2=%q y2=%q stroke=%q stroke-width=\"1.1\"/>\n",
-		f(x(col)), f(mid), f(x(col+barCells)), f(mid), dim)
+		f(x(col)), f(mid), f(x(col+barCells)), f(mid), lineColor)
 	for _, t := range ticks {
 		cx := x(col+t) + cellW/2
 		fmt.Fprintf(&c.b, "  <line x1=%q y1=%q x2=%q y2=%q stroke=%q stroke-width=\"1.1\"/>\n",
-			f(cx), f(mid-5.2), f(cx), f(mid+5.2), dim)
+			f(cx), f(mid-5.2), f(cx), f(mid+5.2), lineColor)
 	}
 	for _, p := range pips {
+		fill := p.fill
+		if pipColor != "" {
+			fill = pipColor
+		}
 		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.5\" fill=%q/>\n",
-			f(x(col+p.col)+cellW/2), f(mid), p.fill)
+			f(x(col+p.col)+cellW/2), f(mid), fill)
 	}
 	c.reach(col + barCells)
 }
 
 // marker is the ●/○ in front of an account name: filled for the live account.
-func (c *canvas) marker(row, col int, live bool) {
+func (c *canvas) marker(row, col int, live bool, outline string) {
 	cx, cy := x(col)+cellW/2, yTop(row)+cellH/2
 	if live {
 		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.6\" fill=%q/>\n", f(cx), f(cy), green)
 	} else {
 		fmt.Fprintf(&c.b, "  <circle cx=%q cy=%q r=\"3.1\" fill=\"none\" stroke=%q stroke-width=\"1.3\"/>\n",
-			f(cx), f(cy), dim)
+			f(cx), f(cy), outline)
 	}
 	c.reach(col + 1)
 }
@@ -245,27 +249,36 @@ func (c *canvas) draw(row int, a account) int {
 	if a.selected {
 		c.gutter(row, rows)
 	}
-	c.marker(row, 2, a.live)
-	name := fg
-	if a.selected {
-		name = blue // the cursor colour, so the selection reads even where the bar is faint
+	ink, detail, pipColor := fg, dim, ""
+	if !a.live {
+		if a.selected {
+			detail = fg
+		} else {
+			ink = dim
+		}
+		pipColor = ink
 	}
-	c.text(row, nameCol, a.name, name, true)
-	c.text(row, planCol, a.plan, fg, false)
-	c.text(row, mailCol, a.email, dim, false)
+	c.marker(row, 2, a.live, ink)
+	c.text(row, nameCol, a.name, ink, a.live)
+	c.text(row, planCol, a.plan, ink, false)
+	c.text(row, mailCol, a.email, detail, false)
 	row++
 	for _, m := range a.meters {
-		c.text(row, labelCol, m.label, fg, false)
-		c.bar(row, barCol, m.left)
-		c.text(row, valueCol, fmt.Sprintf("%5.1f%% left", m.left), quotaColor(m.left), false)
-		c.text(row, tailCol, m.tail, dim, false)
+		valueColor := ink
+		if a.live {
+			valueColor = quotaColor(m.left)
+		}
+		c.text(row, labelCol, m.label, ink, false)
+		c.bar(row, barCol, m.left, ink)
+		c.text(row, valueCol, fmt.Sprintf("%5.1f%% left", m.left), valueColor, false)
+		c.text(row, tailCol, m.tail, detail, false)
 		row++
 	}
 	if a.banked != nil {
-		c.text(row, labelCol, "banked", fg, false)
-		c.axis(row, barCol, a.banked.ticks, a.banked.pips)
-		c.text(row, valueCol, fmt.Sprintf("%11s", a.banked.count), fg, false)
-		c.text(row, tailCol, a.banked.tail, dim, false)
+		c.text(row, labelCol, "banked", ink, false)
+		c.axis(row, barCol, a.banked.ticks, a.banked.pips, detail, pipColor)
+		c.text(row, valueCol, fmt.Sprintf("%11s", a.banked.count), ink, false)
+		c.text(row, tailCol, a.banked.tail, detail, false)
 		row++
 	}
 	return row + 1
@@ -330,7 +343,7 @@ func main() {
 
 	fmt.Fprintf(os.Stdout, `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="%[1]s" height="%[2]s" viewBox="0 0 %[1]s %[2]s"
-     role="img" aria-label="the cx dashboard: three accounts with their 5-hour, weekly and banked quotas"
+     role="img" aria-label="cx dashboard with three Codex accounts, an active account, and a separate cursor"
      font-family="%[3]s" font-size="%[4]spx" fill="%[5]s"
      style="font-variant-ligatures:none">
 <defs>
