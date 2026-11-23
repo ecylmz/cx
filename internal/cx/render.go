@@ -349,7 +349,6 @@ type quotaColumns struct {
 
 const (
 	quotaColumnGap      = "  "
-	quotaWindowGap      = "   "
 	quotaWindowMinWidth = len("5 hour")
 	quotaWindowMaxWidth = 37
 	bankedCountWidth    = len("99 left")
@@ -363,7 +362,7 @@ func newQuotaColumns(cols, labelWidth int, bankedDates bool) quotaColumns {
 	if cols <= 0 {
 		cols = 136
 	}
-	gaps := len(quotaColumnGap) + 2*len(quotaWindowGap)
+	gaps := 3 * len(quotaColumnGap)
 	bankedWidth := max(8, min(bankedCountWidth+len("   99?"), cols/5))
 	if bankedDates && cols/3+1 >= bankedMinDateWidth {
 		bankedWidth = min(bankedMaxWidth, cols/3+1)
@@ -378,7 +377,7 @@ func (c quotaColumns) quotaCells(fiveHour, weekly, banked string) string {
 		s = fitCells(s, c.windowWidth)
 		return s + strings.Repeat(" ", max(0, c.windowWidth-visibleCells(s)))
 	}
-	return cell(fiveHour) + quotaWindowGap + cell(weekly) + quotaWindowGap + fitCells(banked, c.bankedWidth)
+	return cell(fiveHour) + quotaColumnGap + cell(weekly) + quotaColumnGap + fitCells(banked, c.bankedWidth)
 }
 
 func (c quotaColumns) heading(indent int, label string) []string {

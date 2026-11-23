@@ -740,7 +740,7 @@ func dashboardTitle(v dashboardView) string {
 		label := "no active account"
 		for _, a := range v.accounts {
 			if a.ID == v.state.activeAccountID(a.provider()) {
-				label = styledAccountLabel(dashboardAccountLabel(a), false)
+				label = styledAccountLabel(dashboardAccountLabel(a), false, true)
 				break
 			}
 		}
@@ -775,7 +775,7 @@ func dashboardBlock(v dashboardView, i int, columns quotaColumns) []string {
 	}
 	line := v.subscriptionHeading(a.subscription(), "▸")
 	if active != "" {
-		line += " · " + styledAccountLabel(active, false)
+		line += " · " + styledAccountLabel(active, false, true)
 	}
 	line += fmt.Sprintf(" · %d %s", count, noun)
 	return []string{line}
@@ -1018,7 +1018,7 @@ func renderSubscriptionMenu(v dashboardView) string {
 		}
 		rows = append(rows, gutter(selected, 4)+marker+" "+label)
 	}
-	return overlayFrame(" "+bold(account.provider().label())+"  subscription · "+styledAccountLabel(dashboardAccountLabel(account), false), rows, v.size, spacing, "↑/↓ choose · enter save · esc cancel")
+	return overlayFrame(" "+bold(account.provider().label())+"  subscription · "+styledAccountLabel(dashboardAccountLabel(account), false, false), rows, v.size, spacing, "↑/↓ choose · enter save · esc cancel")
 }
 
 // overlayFit reports how many listing rows an overlay screen can show and
@@ -1085,7 +1085,7 @@ func renderBankedScreen(v dashboardView) string {
 		if r.Account.provider() != providerCodex {
 			continue
 		}
-		label := fitCells(styledAccountLabel(dashboardAccountLabel(r.Account), i == v.sel), labelWidth)
+		label := fitCells(styledAccountLabel(dashboardAccountLabel(r.Account), i == v.sel, false), labelWidth)
 		head := "   " + label + strings.Repeat(" ", labelWidth-visibleCells(label)) + quotaColumnGap
 		switch {
 		case r.BankedErr != "":
@@ -1145,28 +1145,31 @@ func gutter(selected bool, width int) string {
 }
 
 func dashboardAccountHeader(st State, a Account, selected bool) string {
-	label := styledAccountLabel(dashboardAccountLabel(a), selected)
+	active := a.ID == st.activeAccountID(a.provider())
+	label := styledAccountLabel(dashboardAccountLabel(a), selected, active)
 	if selected {
 		return "  " + label
 	}
-	active := dim("○")
-	if a.ID == st.activeAccountID(a.provider()) {
-		active = green("●")
+	marker := dim("○")
+	if active {
+		marker = green("●")
 	}
-	return active + " " + label
+	return marker + " " + label
 }
 
 func dashboardAccountLabel(a Account) string {
 	return cmp.Or(a.Email, a.Name)
 }
 
-func styledAccountLabel(label string, selected bool) string {
+func styledAccountLabel(label string, selected, active bool) string {
 	if label == "" {
 		return dim("—")
 	}
 	local, domain, hasDomain := strings.Cut(label, "@")
 	name := bold(local)
-	if selected {
+	if active {
+		name = green(name)
+	} else if selected {
 		name = cyan(name)
 	}
 	if hasDomain {

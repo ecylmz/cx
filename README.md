@@ -76,7 +76,7 @@ cx version
 
 ### Dashboard
 
-The dashboard groups accounts by subscription. If you have one subscription, the dashboard shows a single list. If you have more than one, groups start open and appear in alphabetical order. A cyan bar marks the selected account row. On other rows, a green dot marks the active account for its provider.
+The dashboard groups accounts by subscription. If you have one subscription, the dashboard shows a single list. If you have more than one, groups start open and appear in alphabetical order. A cyan bar marks the selected row. A green name marks the active account for each provider. Outside the selected row, the active account also has a green dot.
 
 Each account uses one row by default. The row shows the email address and the quota for Codex or Gemini Models. If the email address is unavailable, the row shows the account name. A blank line separates groups and follows each open group heading. The table shows one set of `5 hour`, `weekly`, and `banked` headings. The `↻` symbol marks the reset time.
 

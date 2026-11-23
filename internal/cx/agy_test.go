@@ -452,13 +452,18 @@ func TestDashboardHighlightsActiveAccountsIndependently(t *testing.T) {
 	}
 	for _, p := range []provider{providerCodex, providerAgy} {
 		v.state.DefaultAccountID = v.state.activeAccountID(p)
-		frame, _ := renderDashboardFrame(v)
-		if strings.Count(frame, green("●")) != 2 || strings.Count(frame, green("80%")) != 2 {
-			t.Fatalf("both active accounts should be colored: %q", frame)
-		}
-		for _, line := range strings.Split(frame, "\n") {
-			if strings.Contains(line, "agy-backup") && !strings.Contains(plain(line), "▌  agy-backup") {
-				t.Fatalf("selected inactive account should have a cursor in front of its email: %q", line)
+		for sel := range v.accounts {
+			v.sel = sel
+			frame, layout := renderDashboardFrame(v)
+			rows := strings.Split(frame, "\n")
+			for i, a := range v.accounts[:2] {
+				if row := rows[layout.headerRows[i]-1]; !strings.Contains(row, green(bold(a.Name))) || !strings.Contains(row, green("80%")) {
+					t.Fatalf("the active account and its quota should be green: %q", row)
+				}
+			}
+			row := rows[layout.headerRows[sel]-1]
+			if !strings.Contains(row, cyan("▌")) || !strings.Contains(plain(row), "▌  "+v.accounts[sel].Name) {
+				t.Fatalf("the selected row should have a separate cyan cursor: %q", row)
 			}
 		}
 	}
