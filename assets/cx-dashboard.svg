@@ -28,10 +28,10 @@
   <text x="116" y="139.4" textLength="115.2" fill="#8b949e">@example.com</text>
   <text x="298.4" y="139.4" textLength="28.8">78%</text>
   <text x="346.4" y="139.4" textLength="9.6">↻</text>
-  <text x="375.2" y="139.4" textLength="153.6">23.11.2026 15:20</text>
+  <text x="375.2" y="139.4" textLength="105.6">23.11 15:20</text>
   <text x="548" y="139.4" textLength="28.8">92%</text>
   <text x="596" y="139.4" textLength="9.6">↻</text>
-  <text x="624.8" y="139.4" textLength="153.6">27.11.2026 10:00</text>
+  <text x="624.8" y="139.4" textLength="105.6">27.11 10:00</text>
   <text x="797.6" y="139.4" textLength="9.6" fill="#8b949e">—</text>
   <text x="29.6" y="177.8" textLength="9.6">▾</text>
   <rect x="48.8" y="165.2" width="67.2" height="15.2" fill="#c9d1d9" shape-rendering="crispEdges"/>
@@ -42,10 +42,10 @@
   <text x="106.4" y="216.2" textLength="115.2" fill="#8b949e">@example.com</text>
   <text x="298.4" y="216.2" textLength="19.2">9%</text>
   <text x="346.4" y="216.2" textLength="9.6">↻</text>
-  <text x="375.2" y="216.2" textLength="153.6">23.11.2026 17:50</text>
+  <text x="375.2" y="216.2" textLength="105.6">23.11 17:50</text>
   <text x="548" y="216.2" textLength="28.8">88%</text>
   <text x="596" y="216.2" textLength="9.6">↻</text>
-  <text x="624.8" y="216.2" textLength="153.6">26.11.2026 13:39</text>
+  <text x="624.8" y="216.2" textLength="105.6">26.11 13:39</text>
   <text x="797.6" y="216.2" textLength="57.6" fill="#8b949e">2 left</text>
   <text x="884" y="216.2" textLength="230.4" fill="#8b949e">25.11.2026 17:50 · in 2d</text>
   <circle cx="63.2" cy="230.4" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
@@ -54,7 +54,7 @@
   <text x="298.4" y="235.4" textLength="172.8" fill="#8b949e">Starts after reset</text>
   <text x="548" y="235.4" textLength="19.2" fill="#8b949e">0%</text>
   <text x="596" y="235.4" textLength="9.6" fill="#8b949e">↻</text>
-  <text x="624.8" y="235.4" textLength="153.6" fill="#8b949e">27.11.2026 09:40</text>
+  <text x="624.8" y="235.4" textLength="105.6" fill="#8b949e">27.11 09:40</text>
   <text x="797.6" y="235.4" textLength="57.6" fill="#8b949e">0 left</text>
   <text x="29.6" y="273.8" textLength="96" fill="#8b949e">↑/↓ select</text>
   <text x="154.4" y="273.8" textLength="144" fill="#8b949e">←/→ fold/unfold</text>

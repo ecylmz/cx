@@ -349,9 +349,9 @@ type quotaColumns struct {
 
 const (
 	quotaColumnGap      = "  "
-	quotaWindowGap      = " "
+	quotaWindowGap      = "   "
 	quotaWindowMinWidth = len("5 hour")
-	quotaWindowMaxWidth = 36
+	quotaWindowMaxWidth = 37
 	bankedCountWidth    = len("99 left")
 	bankedMinDateWidth  = bankedCountWidth + len(quotaColumnGap) + len("01-02 15:04")
 	bankedCountdownMin  = len("   in 29d")
@@ -364,7 +364,7 @@ func newQuotaColumns(cols, labelWidth int, bankedDates bool) quotaColumns {
 		cols = 136
 	}
 	gaps := len(quotaColumnGap) + 2*len(quotaWindowGap)
-	bankedWidth := max(8, min(14, cols/5))
+	bankedWidth := max(8, min(bankedCountWidth+len("   99?"), cols/5))
 	if bankedDates && cols/3+1 >= bankedMinDateWidth {
 		bankedWidth = min(bankedMaxWidth, cols/3+1)
 	}
