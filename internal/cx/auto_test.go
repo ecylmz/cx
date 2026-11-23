@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -170,7 +171,7 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	backup := Account{ID: "b", Name: "backup", AccountID: "acct-b", CreatedAt: created.Add(time.Minute), UpdatedAt: created}
 	writeTestAccount(t, p, primary)
 	writeTestAccount(t, p, backup)
-	if err := saveState(p, State{ActiveID: primary.ID}); err != nil {
+	if err := saveState(p, State{CodexAccountID: primary.ID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,7 +236,7 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
 	state, err := loadState(p)
-	if err != nil || state.ActiveID != backup.ID {
+	if err != nil || state.CodexAccountID != backup.ID {
 		t.Fatalf("state=%+v err=%v", state, err)
 	}
 	if starts.Load() != 0 {
@@ -258,8 +259,11 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	}
 
 	installTestAgy(t)
+	if err := os.WriteFile(os.Getenv("TEST_AGY_KEYRING"), []byte(`{"id_token_email":"google@example.com","token":{"refresh_token":"google"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("TEST_AGY_WEEKLY", "0.01")
-	if _, err := addAgyAccount(p, "google", true); err != nil {
+	if _, err := addAgyAccount(p, "google", "", true); err != nil {
 		t.Fatal(err)
 	}
 	quotas["acct-a"] = usage{weekly: 100, fiveHour: 50}
@@ -271,7 +275,7 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 
 	quotas["acct-b"] = usage{weekly: 100, fiveHour: 50}
 	out = captureStdout(t, func() { err = handleAuto(p) })
-	if err != nil || !strings.Contains(out, "switched to google [Antigravity]") {
+	if err != nil || !strings.Contains(out, "switched to google [Antigravity Pro]") {
 		t.Fatalf("Antigravity fallback: out=%q err=%v", out, err)
 	}
 	out = captureStdout(t, func() { err = handleAuto(p) })
@@ -282,7 +286,7 @@ func TestHandleAutoKeepsThenSwitchesWithoutStartingWindows(t *testing.T) {
 	t.Setenv("TEST_AGY_WEEKLY", "0")
 	quotas["acct-a"] = usage{weekly: 50, fiveHour: 50}
 	out = captureStdout(t, func() { err = handleAuto(p) })
-	if err != nil || !strings.Contains(out, "switched to primary [Codex]") {
+	if err != nil || !strings.Contains(out, "switched to primary [Codex Plus]") {
 		t.Fatalf("Codex fallback: out=%q err=%v", out, err)
 	}
 }

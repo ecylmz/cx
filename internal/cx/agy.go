@@ -1,14 +1,17 @@
 package cx
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -16,62 +19,14 @@ import (
 
 const agyDefaultID = "agy-default"
 
-func handleAgy(p paths, args []string) error {
-	if len(args) == 0 || slices.Contains([]string{"help", "-h", "--help"}, args[0]) {
-		fmt.Print(`Usage:
-  cx agy init [NAME]                add the existing agy login (default: primary)
-  cx agy add NAME                   sign in to an isolated Google account
-  cx agy use [NAME] [--resume]       activate an account and make Antigravity the default
-  cx agy status [NAME] [--json]     show Antigravity quotas
-  cx agy rename OLD NEW             rename an Antigravity account
-  cx agy remove NAME                remove an Antigravity account
-  cx agy run [ARGS...]               launch the selected Antigravity account
-`)
-		return nil
-	}
-	switch args[0] {
-	case "init", "add":
-		existing := args[0] == "init"
-		if len(args) > 2 || (!existing && len(args) != 2) {
-			return errors.New("usage: cx agy init [NAME] or cx agy add NAME")
-		}
-		name := "primary"
-		if len(args) == 2 {
-			name = args[1]
-		}
-		a, err := addAgyAccount(p, name, existing)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s added %s [%s]\n", green("✓"), a.Name, a.Provider.label())
-	case "use":
-		which := providerAgy
-		return useAccount(p, args[1:], &which)
-	case "status":
-		os.Exit(handleProviderStatus(p, args[1:], providerAgy))
-	case "rename":
-		if len(args) != 3 {
-			return errors.New("usage: cx agy rename OLD NEW")
-		}
-		return renameAccountFor(p, args[1], args[2], providerAgy)
-	case "remove":
-		if len(args) != 2 {
-			return errors.New("usage: cx agy remove NAME")
-		}
-		return removeAccountFor(p, args[1], providerAgy)
-	case "run":
-		which := providerAgy
-		return runAgent(p, args[1:], &which)
-	default:
-		return fmt.Errorf("unknown Antigravity command %q; run cx agy help", args[0])
-	}
-	return nil
-}
+var errNoAgyCredential = errors.New("no saved agy credential")
 
 func agyCommand(ctx context.Context, p paths, a Account, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "agy", args...)
 	if a.ID == agyDefaultID {
-		return cmd
+		if _, err := os.Lstat(agyCredentialPath(p, a)); errors.Is(err, os.ErrNotExist) {
+			return cmd
+		}
 	}
 	home := filepath.Join(p.accountDir(a.ID), "home")
 	// shortcut: agy selects its private file store in SSH mode, use a native profile flag when one is available.
@@ -99,12 +54,18 @@ func checkAgyVersion(ctx context.Context) error {
 	return nil
 }
 
-func readAgyUsage(p paths, a Account, login bool) ([]quotaGroup, error) {
+type agyUsage struct {
+	groups           []quotaGroup
+	tier             string
+	hasFiveHourQuota bool
+}
+
+func readAgyUsage(p paths, a Account, login bool) (agyUsage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	err := checkAgyVersion(ctx)
 	cancel()
 	if err != nil {
-		return nil, err
+		return agyUsage{}, err
 	}
 	ctx = context.Background()
 	if !login {
@@ -120,33 +81,36 @@ func readAgyUsage(p paths, a Account, login bool) ([]quotaGroup, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("agy quota request: %w", ctx.Err())
+			return agyUsage{}, fmt.Errorf("agy quota request: %w", ctx.Err())
 		}
-		return nil, fmt.Errorf("agy /usage failed: %w", err)
+		return agyUsage{}, fmt.Errorf("agy /usage failed: %w", err)
 	}
 	return parseAgyUsage(out, time.Now())
 }
 
-func parseAgyUsage(out []byte, now time.Time) ([]quotaGroup, error) {
+func parseAgyUsage(out []byte, now time.Time) (agyUsage, error) {
 	var report struct {
-		NumTurns int `json:"num_turns"`
+		NumTurns int    `json:"num_turns"`
+		Tier     string `json:"plan_tier"`
 		Command  struct {
 			Data struct {
+				Tier   string `json:"plan_tier"`
 				Groups []struct {
 					Name    string `json:"name"`
 					Buckets []struct {
 						Window    string   `json:"window"`
 						Remaining *float64 `json:"remaining_fraction"`
 						ResetTime string   `json:"reset_time"`
+						Disabled  bool     `json:"disabled"`
 					} `json:"buckets"`
 				} `json:"groups"`
 			} `json:"data"`
 		} `json:"command"`
 	}
 	if err := json.Unmarshal(out, &report); err != nil || report.NumTurns != 0 {
-		return nil, errors.New("invalid agy quota response")
+		return agyUsage{}, errors.New("invalid agy quota response")
 	}
-	var groups []quotaGroup
+	usage := agyUsage{tier: cmp.Or(report.Tier, report.Command.Data.Tier)}
 	for _, group := range report.Command.Data.Groups {
 		name := strings.Map(func(r rune) rune {
 			if unicode.IsControl(r) {
@@ -178,6 +142,9 @@ func parseAgyUsage(out []byte, now time.Time) ([]quotaGroup, error) {
 					quota.Weekly = u
 				}
 			case "5h":
+				if !bucket.Disabled && u.ResetsAt > now.Unix() {
+					usage.hasFiveHourQuota = true
+				}
 				u.WindowMinutes = 5 * 60
 				if quota.FiveHour == nil || u.UsedPercent > quota.FiveHour.UsedPercent {
 					quota.FiveHour = &u
@@ -185,30 +152,33 @@ func parseAgyUsage(out []byte, now time.Time) ([]quotaGroup, error) {
 			}
 		}
 		if complete && quota.Name != "" && (quota.Weekly.WindowMinutes > 0 || quota.FiveHour != nil) {
-			groups = append(groups, quota)
+			usage.groups = append(usage.groups, quota)
 		}
 	}
-	if len(groups) == 0 {
-		return nil, errors.New("agy returned no quota windows")
+	if len(usage.groups) == 0 {
+		return agyUsage{}, errors.New("agy returned no quota windows")
 	}
-	return groups, nil
+	return usage, nil
 }
 
 func fetchAgyUsage(p paths, a Account) UsageResult {
-	groups, err := readAgyUsage(p, a, false)
-	r := UsageResult{Account: a, QuotaGroups: groups}
+	if a.Email == "" {
+		a.Email = agyAccountEmail(p, a)
+	}
+	usage, err := readAgyUsage(p, a, false)
+	r := UsageResult{Account: a, QuotaGroups: usage.groups}
 	if err != nil {
 		r.Err = err.Error()
 	}
 	return r
 }
 
-func addAgyAccount(p paths, name string, existing bool) (Account, error) {
+func addAgyAccount(p paths, name string, sub subscription, existing bool) (Account, error) {
 	if err := validateName(name); err != nil {
 		return Account{}, err
 	}
 	name = strings.TrimSpace(name)
-	checkName := func() error {
+	checkAccount := func(email string) error {
 		accounts, err := listAccountsFor(p, providerAgy)
 		if err != nil {
 			return err
@@ -220,16 +190,25 @@ func addAgyAccount(p paths, name string, existing bool) (Account, error) {
 			if strings.EqualFold(a.Name, name) {
 				return fmt.Errorf("account name already exists: %s", name)
 			}
+			if email != "" {
+				savedEmail := a.Email
+				if savedEmail == "" {
+					savedEmail = agyAccountEmail(p, a)
+				}
+				if strings.EqualFold(savedEmail, email) {
+					return fmt.Errorf("Antigravity account is already registered as %s", a.Name)
+				}
+			}
 		}
 		return nil
 	}
-	if err := checkName(); err != nil {
+	if err := checkAccount(""); err != nil {
 		return Account{}, err
 	}
-	a := Account{ID: agyDefaultID, Provider: providerAgy, Name: name}
+	a := Account{ID: agyDefaultID, Subscription: cmp.Or(sub, agyPro), Name: name}
 	if !existing {
 		if !isTerminal() {
-			return Account{}, errors.New("run cx agy add in an interactive terminal")
+			return Account{}, errors.New("run cx add NAME --provider agy in an interactive terminal")
 		}
 		id, err := newID()
 		if err != nil {
@@ -250,24 +229,44 @@ func addAgyAccount(p paths, name string, existing bool) (Account, error) {
 	if !existing {
 		fmt.Println("Sign in with the Google account for " + name + ".")
 	}
-	if _, err := readAgyUsage(p, a, !existing); err != nil {
+	usage, err := readAgyUsage(p, a, !existing)
+	if err != nil {
 		return Account{}, err
 	}
-	if !existing {
-		if err := requireAgyCredential(p, a); err != nil {
-			return Account{}, err
-		}
-		if err := os.Chmod(agyCredentialPath(p, a), 0o600); err != nil {
-			return Account{}, err
-		}
+	if err := verifySubscription(sub, usage.tier); err != nil {
+		return Account{}, err
+	}
+	if sub != "" && usage.tier == "" && usage.hasFiveHourQuota && (sub.tier() == "free" || sub.tier() == "plus") {
+		return Account{}, fmt.Errorf("subscription mismatch: expected %s, but Antigravity reported an active five-hour quota", sub.label())
 	}
 	lock, err := lockState(p)
 	if err != nil {
 		return Account{}, err
 	}
 	defer lock.Close()
-	if err := checkName(); err != nil {
+	if existing {
+		credential, err := (agyKeyring{platform: runtime.GOOS}).read()
+		if err != nil {
+			return Account{}, err
+		}
+		if agyCredentialEmail(credential) == "" {
+			return Account{}, errors.New("no supported Antigravity OAuth login in the keyring")
+		}
+		if err := atomicWrite(agyCredentialPath(p, a), credential, 0o600); err != nil {
+			return Account{}, err
+		}
+	}
+	credential, email, err := readAgyCredential(p, a)
+	if err != nil {
 		return Account{}, err
+	}
+	if err := checkAccount(email); err != nil {
+		return Account{}, err
+	}
+	if !existing {
+		if err := atomicWrite(agyCredentialPath(p, a), credential, 0o600); err != nil {
+			return Account{}, err
+		}
 	}
 	st, err := loadState(p)
 	if err != nil {
@@ -275,19 +274,26 @@ func addAgyAccount(p paths, name string, existing bool) (Account, error) {
 	}
 	a.CreatedAt = time.Now()
 	a.UpdatedAt = a.CreatedAt
-	first := st.selectedAccountID(providerAgy) == ""
-	if first {
+	a.Email = email
+	activate := !existing || st.activeAccountID(providerAgy) == ""
+	if activate {
 		a.LastUsedAt = &a.CreatedAt
 	}
 	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
 		return Account{}, err
 	}
-	if first {
-		if st.defaultAccountID() == "" {
-			st.DefaultProvider = providerAgy
+	if activate {
+		if !existing {
+			st.DefaultAccountID = a.ID
 		}
-		st.selectAccount(a)
-		if err := saveState(p, st); err != nil {
+		st.setActiveAccount(a)
+		save := func() error { return saveState(p, st) }
+		if existing {
+			err = save()
+		} else {
+			err = switchAgyAccount(p, a, save)
+		}
+		if err != nil {
 			return Account{}, err
 		}
 	}
@@ -299,22 +305,59 @@ func agyCredentialPath(p paths, a Account) string {
 	return filepath.Join(p.accountDir(a.ID), "home", ".gemini", "antigravity-cli", "antigravity-oauth-token")
 }
 
-func requireAgyCredential(p paths, a Account) error {
-	if a.ID == agyDefaultID {
-		return nil
-	}
-	info, err := os.Lstat(agyCredentialPath(p, a))
-	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return fmt.Errorf("no saved agy credential for %s", a.Name)
-	}
-	return nil
+func agyAccountEmail(p paths, a Account) string {
+	_, email, _ := readAgyCredential(p, a)
+	return email
 }
 
-func launchAgy(p paths, a Account, args []string) error {
+func readAgyCredential(p paths, a Account) ([]byte, string, error) {
+	path := agyCredentialPath(p, a)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", fmt.Errorf("%w for %s", errNoAgyCredential, a.Name)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil, "", fmt.Errorf("invalid saved agy credential for %s", a.Name)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	data = bytes.TrimSpace(data)
+	email := agyCredentialEmail(data)
+	if email == "" || a.Email != "" && !strings.EqualFold(a.Email, email) {
+		return nil, "", fmt.Errorf("invalid saved agy credential for %s", a.Name)
+	}
+	return data, email, nil
+}
+
+func agyCredentialEmail(data []byte) string {
+	// shortcut: use the file store's email when agy exposes no identity command.
+	var profile struct {
+		Email string `json:"id_token_email"`
+		Token struct {
+			RefreshToken string `json:"refresh_token"`
+		} `json:"token"`
+	}
+	if err := json.Unmarshal(data, &profile); err != nil || profile.Token.RefreshToken == "" {
+		return ""
+	}
+	email := strings.TrimSpace(profile.Email)
+	address, err := mail.ParseAddress(email)
+	if err != nil || address.Address != email || strings.ContainsFunc(email, unicode.IsControl) {
+		return ""
+	}
+	return email
+}
+
+func launchAgy(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
 	if err := checkAgyVersion(ctx); err != nil {
 		return err
 	}
-	return execAgent(agyCommand(context.Background(), p, a, args...))
+	return execAgent(exec.Command("agy", args...))
 }

@@ -14,7 +14,7 @@ func TestJWTAndParseAuthFailures(t *testing.T) {
 		t.Fatal("expected invalid JWT")
 	}
 	p := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(p, []byte(`{"tokens":{}}`), 0600); err != nil {
+	if err := os.WriteFile(p, []byte(`{"tokens":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := parseAuth(p); err == nil {
@@ -26,7 +26,7 @@ func TestEnsureFileStoreConfigAddsReplacesAndBacksUp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	original := "model = \"x\"\ncli_auth_credentials_store = \"keyring\"\n"
-	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := ensureFileStoreConfig(path, true); err != nil {
@@ -58,13 +58,13 @@ func TestInstallAuthValidatesJSON(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
-	if err := os.WriteFile(src, []byte("not-json"), 0600); err != nil {
+	if err := os.WriteFile(src, []byte("not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := installAuth(src, dst); err == nil {
 		t.Fatal("expected invalid JSON")
 	}
-	if err := os.WriteFile(src, []byte(`{"tokens":{"access_token":"x"}}`), 0600); err != nil {
+	if err := os.WriteFile(src, []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := installAuth(src, dst); err != nil {
@@ -79,10 +79,10 @@ func TestInstallAuthValidatesJSON(t *testing.T) {
 func TestSwitchAccountRejectsIdentityMismatchAndUnmanagedSymlink(t *testing.T) {
 	p := makeTestPaths(t)
 	a := Account{ID: "a", Name: "alpha", AccountID: "expected", CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := os.MkdirAll(p.accountDir(a.ID), 0700); err != nil {
+	if err := os.MkdirAll(p.accountDir(a.ID), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p.accountAuth(a.ID), testAuthBytes(t, "other"), 0600); err != nil {
+	if err := os.WriteFile(p.accountAuth(a.ID), testAuthBytes(t, "other"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
@@ -92,11 +92,11 @@ func TestSwitchAccountRejectsIdentityMismatchAndUnmanagedSymlink(t *testing.T) {
 		t.Fatalf("expected identity mismatch, got %v", err)
 	}
 
-	if err := os.WriteFile(p.accountAuth(a.ID), testAuthBytes(t, "expected"), 0600); err != nil {
+	if err := os.WriteFile(p.accountAuth(a.ID), testAuthBytes(t, "expected"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(p.Home, "outside-auth")
-	if err := os.WriteFile(outside, []byte("x"), 0600); err != nil {
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, p.sharedAuthPath()); err != nil {
@@ -114,11 +114,11 @@ func TestParseAuthUsesTokenAccountIDFirst(t *testing.T) {
 	if err := json.Unmarshal(raw, &shape); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, raw, 0600); err != nil {
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	id, err := parseAuth(p)
-	if err != nil || id.AccountID != "acct" || id.Email != "x@example.com" || id.Plan != "plus" {
+	if err != nil || id.AccountID != "acct" || id.Email != "x@example.com" || id.Tier != "plus" {
 		t.Fatalf("id=%+v err=%v", id, err)
 	}
 }

@@ -40,11 +40,11 @@ func testAuthBytesFor(t *testing.T, accountID, email string) []byte {
 func TestBootstrapAdoptsExistingCodexLoginAsPrimary(t *testing.T) {
 	p := makeTestPaths(t)
 	email := "emre.can.ylmz@gmail.com"
-	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", email), 0600); err != nil {
+	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", email), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	a, status, err := bootstrapPrimaryAccount(p)
+	a, status, err := bootstrapPrimaryAccount(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestBootstrapAdoptsExistingCodexLoginAsPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.ActiveID != a.ID {
+	if st.CodexAccountID != a.ID {
 		t.Fatalf("adopted account must become active: state=%+v account=%+v", st, a)
 	}
 	info, err := os.Lstat(p.sharedAuthPath())
@@ -93,7 +93,7 @@ func TestBootstrapAdoptsExistingCodexLoginAsPrimary(t *testing.T) {
 func TestBootstrapAddsNothingWithoutExistingCodexLogin(t *testing.T) {
 	p := makeTestPaths(t)
 
-	_, status, err := bootstrapPrimaryAccount(p)
+	_, status, err := bootstrapPrimaryAccount(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestBootstrapAddsNothingWithoutExistingCodexLogin(t *testing.T) {
 	if len(accounts) != 0 {
 		t.Fatalf("bootstrap invented accounts on an unauthorized system: %+v", accounts)
 	}
-	if st, _ := loadState(p); st.ActiveID != "" {
+	if st, _ := loadState(p); st.CodexAccountID != "" {
 		t.Fatalf("state=%+v", st)
 	}
 	if _, err := os.Lstat(p.sharedAuthPath()); !os.IsNotExist(err) {
@@ -118,11 +118,11 @@ func TestBootstrapAddsNothingWithoutExistingCodexLogin(t *testing.T) {
 func TestBootstrapIgnoresNonChatGPTAuth(t *testing.T) {
 	p := makeTestPaths(t)
 	raw := []byte(`{"OPENAI_API_KEY":"sk-test"}`)
-	if err := os.WriteFile(p.sharedAuthPath(), raw, 0600); err != nil {
+	if err := os.WriteFile(p.sharedAuthPath(), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, status, err := bootstrapPrimaryAccount(p)
+	_, status, err := bootstrapPrimaryAccount(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,18 +144,18 @@ func TestBootstrapIgnoresNonChatGPTAuth(t *testing.T) {
 
 func TestBootstrapIsIdempotentAndKeepsUserChosenNames(t *testing.T) {
 	p := makeTestPaths(t)
-	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "a@example.com"), 0600); err != nil {
+	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", "a@example.com"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, status, err := bootstrapPrimaryAccount(p)
+	first, status, err := bootstrapPrimaryAccount(p, "")
 	if err != nil || status != bootstrapAdopted {
 		t.Fatalf("first bootstrap: %+v %v %v", first, status, err)
 	}
-	if err := renameAccount(p, primaryAccountName, "work"); err != nil {
+	if err := renameAccount(p, primaryAccountName, "work", nil); err != nil {
 		t.Fatal(err)
 	}
 
-	_, status, err = bootstrapPrimaryAccount(p)
+	_, status, err = bootstrapPrimaryAccount(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,17 +176,17 @@ func TestAddKeepsFirstAccountNameAndDoesNotImportExistingLogin(t *testing.T) {
 
 	oldEmail := "emre.can.ylmz@gmail.com"
 	newEmail := "atakumtech@gmail.com"
-	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", oldEmail), 0600); err != nil {
+	if err := os.WriteFile(p.sharedAuthPath(), testAuthBytesFor(t, "acct-old", oldEmail), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	newAuth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(newAuth, testAuthBytesFor(t, "acct-new", newEmail), 0600); err != nil {
+	if err := os.WriteFile(newAuth, testAuthBytesFor(t, "acct-new", newEmail), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	installFakeLoginCodex(t, newAuth)
 
-	added, err := addAccount(p, "backup1", newEmail)
+	added, err := addAccount(p, "backup1", newEmail, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestAddKeepsFirstAccountNameAndDoesNotImportExistingLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.ActiveID != added.ID {
+	if st.CodexAccountID != added.ID {
 		t.Fatalf("first added account should become active: state=%+v added=%+v", st, added)
 	}
 	live, err := parseAuth(p.sharedAuthPath())

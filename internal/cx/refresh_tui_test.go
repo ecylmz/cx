@@ -69,7 +69,7 @@ func TestFiveHourIdleLineExplainsHowItStarts(t *testing.T) {
 		ResetsAt:      now.Add(5 * time.Hour).Unix(),
 		FetchedAt:     now,
 	}
-	line := fiveHourUsageLine(u)
+	line := strings.Join(usageLines(UsageResult{FiveHour: &u}), "\n")
 	if !strings.Contains(line, "not started · starts with Codex use") {
 		t.Fatalf("five-hour idle line is ambiguous: %q", line)
 	}

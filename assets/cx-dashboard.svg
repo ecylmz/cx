@@ -1,92 +1,70 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="912" height="444" viewBox="0 0 912 444"
-     role="img" aria-label="cx dashboard with three Codex accounts, an active account, and a separate cursor"
+<svg xmlns="http://www.w3.org/2000/svg" width="1258" height="310" viewBox="0 0 1258 310"
+     role="img" aria-label="cx dashboard with aligned quota columns for Antigravity and Codex"
      font-family="'JetBrains Mono','JetBrainsMono Nerd Font','SF Mono',SFMono-Regular,ui-monospace,Menlo,Consolas,'DejaVu Sans Mono','Liberation Mono',monospace" font-size="16px" fill="#c9d1d9"
      style="font-variant-ligatures:none">
 <defs>
-  <clipPath id="card"><rect x="0" y="0" width="856" height="388" rx="14"/></clipPath>
+  <clipPath id="card"><rect x="0" y="0" width="1202" height="254" rx="14"/></clipPath>
 </defs>
-<rect width="912" height="444" rx="20" fill="#1c2128"/>
-<rect x="32" y="36" width="856" height="388" rx="14" fill="#000000" opacity="0.24"/>
+<rect width="1258" height="310" rx="20" fill="#1c2128"/>
+<rect x="32" y="36" width="1202" height="254" rx="14" fill="#000000" opacity="0.24"/>
 <g transform="translate(28 28)">
-  <rect x="0" y="0" width="856" height="388" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="0" y="0" width="1202" height="254" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
   <g clip-path="url(#card)">
-  <line x1="0" y1="34" x2="856" y2="34" stroke="#30363d" stroke-width="1"/>
+  <line x1="0" y1="34" x2="1202" y2="34" stroke="#30363d" stroke-width="1"/>
   <circle cx="13.5" cy="17" r="5.5" fill="#ff5a54"/>
   <circle cx="32.5" cy="17" r="5.5" fill="#e6bf29"/>
   <circle cx="51.5" cy="17" r="5.5" fill="#52c12b"/>
   <text x="29.6" y="62.6" textLength="19.2" font-weight="600">cx</text>
-  <text x="68" y="62.6" textLength="67.2">primary</text>
-  <text x="154.4" y="62.6" textLength="163.2" fill="#8b949e">· updated 12s ago</text>
-  <circle cx="44" cy="96" r="3.6" fill="#3fb950"/>
-  <text x="58.4" y="101" textLength="67.2" font-weight="600">primary</text>
-  <text x="240.8" y="101" textLength="38.4">plus</text>
-  <text x="346.4" y="101" textLength="144" fill="#8b949e">you@example.com</text>
-  <text x="48.8" y="120.2" textLength="57.6">5 hour</text>
-  <rect x="125.6" y="107.45" width="86.4" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
-  <rect x="212" y="107.45" width="124.8" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="120.2" textLength="96" fill="#d29922">42.0% left</text>
-  <text x="490.4" y="120.2" textLength="336" fill="#8b949e">resets 06.09.2026 17:50 · in 2h 10m</text>
-  <text x="48.8" y="139.4" textLength="57.6">weekly</text>
-  <rect x="125.6" y="126.65" width="182.4" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
-  <rect x="308" y="126.65" width="28.8" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="139.4" textLength="96" fill="#3fb950">88.0% left</text>
-  <text x="490.4" y="139.4" textLength="336" fill="#8b949e">resets 09.09.2026 13:39 · in 2d 21h</text>
-  <text x="48.8" y="158.6" textLength="57.6">banked</text>
-  <line x1="125.6" y1="153.6" x2="336.8" y2="153.6" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="178.4" y1="148.4" x2="178.4" y2="158.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="226.4" y1="148.4" x2="226.4" y2="158.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="274.4" y1="148.4" x2="274.4" y2="158.8" stroke="#8b949e" stroke-width="1.1"/>
-  <line x1="322.4" y1="148.4" x2="322.4" y2="158.8" stroke="#8b949e" stroke-width="1.1"/>
-  <circle cx="216.8" cy="153.6" r="3.5" fill="#c9d1d9"/>
-  <circle cx="312.8" cy="153.6" r="3.5" fill="#c9d1d9"/>
-  <text x="404" y="158.6" textLength="57.6">2 left</text>
-  <text x="490.4" y="158.6" textLength="144" fill="#8b949e">next in 12d 18h</text>
-  <rect x="29.6" y="184.4" width="4.8" height="72.8" fill="#58a6ff" shape-rendering="crispEdges"/>
-  <circle cx="44" cy="192" r="3.1" fill="none" stroke="#c9d1d9" stroke-width="1.3"/>
-  <text x="58.4" y="197" textLength="38.4">work</text>
-  <text x="240.8" y="197" textLength="28.8">pro</text>
-  <text x="346.4" y="197" textLength="153.6">work@example.com</text>
-  <text x="48.8" y="216.2" textLength="57.6">5 hour</text>
-  <rect x="125.6" y="203.45" width="211.2" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
-  <text x="356" y="216.2" textLength="105.6">100.0% left</text>
-  <text x="490.4" y="216.2" textLength="336">not started · starts with Codex use</text>
-  <text x="48.8" y="235.4" textLength="57.6">weekly</text>
-  <rect x="125.6" y="222.65" width="124.8" height="15.5" fill="#c9d1d9" shape-rendering="crispEdges"/>
-  <rect x="250.4" y="222.65" width="86.4" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="235.4" textLength="96">61.0% left</text>
-  <text x="490.4" y="235.4" textLength="326.4">resets 10.09.2026 18:39 · in 4d 2h</text>
-  <text x="48.8" y="254.6" textLength="57.6">banked</text>
-  <line x1="125.6" y1="249.6" x2="336.8" y2="249.6" stroke="#c9d1d9" stroke-width="1.1"/>
-  <line x1="178.4" y1="244.4" x2="178.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
-  <line x1="226.4" y1="244.4" x2="226.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
-  <line x1="274.4" y1="244.4" x2="274.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
-  <line x1="322.4" y1="244.4" x2="322.4" y2="254.8" stroke="#c9d1d9" stroke-width="1.1"/>
-  <circle cx="149.6" cy="249.6" r="3.5" fill="#c9d1d9"/>
-  <circle cx="188" cy="249.6" r="3.5" fill="#c9d1d9"/>
-  <circle cx="255.2" cy="249.6" r="3.5" fill="#c9d1d9"/>
-  <text x="404" y="254.6" textLength="57.6">3 left</text>
-  <text x="490.4" y="254.6" textLength="124.8">next in 3d 5h</text>
-  <circle cx="44" cy="288" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
-  <text x="58.4" y="293" textLength="57.6" fill="#8b949e">backup</text>
-  <text x="240.8" y="293" textLength="38.4" fill="#8b949e">plus</text>
-  <text x="346.4" y="293" textLength="172.8" fill="#8b949e">backup@example.com</text>
-  <text x="48.8" y="312.2" textLength="57.6" fill="#8b949e">5 hour</text>
-  <rect x="125.6" y="299.45" width="9.6" height="15.5" fill="#8b949e" shape-rendering="crispEdges"/>
-  <rect x="135.2" y="299.45" width="201.6" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="375.2" y="312.2" textLength="86.4" fill="#8b949e">6.0% left</text>
-  <text x="490.4" y="312.2" textLength="307.2" fill="#8b949e">resets 06.09.2026 16:20 · in 40m</text>
-  <text x="48.8" y="331.4" textLength="57.6" fill="#8b949e">weekly</text>
-  <rect x="125.6" y="318.65" width="38.4" height="15.5" fill="#8b949e" shape-rendering="crispEdges"/>
-  <rect x="164" y="318.65" width="172.8" height="15.5" fill="#39414b" shape-rendering="crispEdges"/>
-  <text x="365.6" y="331.4" textLength="96" fill="#8b949e">17.0% left</text>
-  <text x="490.4" y="331.4" textLength="345.6" fill="#8b949e">resets 07.09.2026 12:19 · in 20h 39m</text>
-  <text x="29.6" y="369.8" textLength="163.2" fill="#8b949e">↑/↓ or j/k select</text>
-  <text x="221.6" y="369.8" textLength="115.2" fill="#8b949e">enter switch</text>
-  <text x="365.6" y="369.8" textLength="86.4" fill="#8b949e">r refresh</text>
-  <text x="480.8" y="369.8" textLength="76.8" fill="#8b949e">b banked</text>
-  <text x="586.4" y="369.8" textLength="57.6" fill="#8b949e">? keys</text>
-  <text x="672.8" y="369.8" textLength="57.6" fill="#8b949e">q quit</text>
+  <text x="68" y="62.6" textLength="163.2" fill="#8b949e">· updated 12s ago</text>
+  <text x="29.6" y="101" textLength="9.6">▾</text>
+  <text x="58.4" y="101" textLength="105.6" font-weight="600">Antigravity</text>
+  <text x="173.6" y="101" textLength="28.8" fill="#8b949e">Pro</text>
+  <text x="298.4" y="101" textLength="57.6" font-weight="600">5 hour</text>
+  <text x="548" y="101" textLength="57.6" font-weight="600">weekly</text>
+  <text x="797.6" y="101" textLength="57.6" font-weight="600">banked</text>
+  <circle cx="63.2" cy="115.2" r="3.6" fill="#3fb950"/>
+  <text x="77.6" y="120.2" textLength="38.4" font-weight="600">work</text>
+  <text x="116" y="120.2" textLength="115.2" fill="#8b949e">@example.com</text>
+  <text x="298.4" y="120.2" textLength="28.8">78%</text>
+  <text x="346.4" y="120.2" textLength="9.6">↻</text>
+  <text x="375.2" y="120.2" textLength="153.6">23.11.2026 15:20</text>
+  <text x="548" y="120.2" textLength="28.8">92%</text>
+  <text x="596" y="120.2" textLength="9.6">↻</text>
+  <text x="624.8" y="120.2" textLength="153.6">27.11.2026 10:00</text>
+  <text x="797.6" y="120.2" textLength="9.6" fill="#8b949e">—</text>
+  <text x="29.6" y="158.6" textLength="9.6">▾</text>
+  <rect x="48.8" y="146" width="67.2" height="15.2" fill="#c9d1d9" shape-rendering="crispEdges"/>
+  <text x="58.4" y="158.6" textLength="48" fill="#0d1117" font-weight="600">Codex</text>
+  <text x="125.6" y="158.6" textLength="134.4" fill="#8b949e">Plus · default</text>
+  <rect x="48.8" y="165.2" width="4.8" height="15.2" fill="#58a6ff" shape-rendering="crispEdges"/>
+  <text x="77.6" y="177.8" textLength="28.8" fill="#58a6ff" font-weight="600">you</text>
+  <text x="106.4" y="177.8" textLength="115.2" fill="#8b949e">@example.com</text>
+  <text x="298.4" y="177.8" textLength="19.2">9%</text>
+  <text x="346.4" y="177.8" textLength="9.6">↻</text>
+  <text x="375.2" y="177.8" textLength="153.6">23.11.2026 17:50</text>
+  <text x="548" y="177.8" textLength="28.8">88%</text>
+  <text x="596" y="177.8" textLength="9.6">↻</text>
+  <text x="624.8" y="177.8" textLength="153.6">26.11.2026 13:39</text>
+  <text x="797.6" y="177.8" textLength="115.2" fill="#8b949e">─●┼──┼──●┼─┼</text>
+  <text x="932" y="177.8" textLength="57.6" fill="#8b949e">2 left</text>
+  <text x="1018.4" y="177.8" textLength="153.6" fill="#8b949e">25.11.2026 17:50</text>
+  <circle cx="63.2" cy="192" r="3.1" fill="none" stroke="#8b949e" stroke-width="1.3"/>
+  <text x="77.6" y="197" textLength="48" font-weight="600">other</text>
+  <text x="125.6" y="197" textLength="115.2" fill="#8b949e">@example.com</text>
+  <text x="298.4" y="197" textLength="172.8" fill="#8b949e">Starts after reset</text>
+  <text x="548" y="197" textLength="19.2" fill="#8b949e">0%</text>
+  <text x="596" y="197" textLength="9.6" fill="#8b949e">↻</text>
+  <text x="624.8" y="197" textLength="153.6" fill="#8b949e">27.11.2026 09:40</text>
+  <text x="797.6" y="197" textLength="57.6" fill="#8b949e">0 left</text>
+  <text x="29.6" y="235.4" textLength="163.2" fill="#8b949e">↑/↓ or j/k select</text>
+  <text x="221.6" y="235.4" textLength="182.4" fill="#8b949e">enter open/activate</text>
+  <text x="432.8" y="235.4" textLength="134.4" fill="#8b949e">s subscription</text>
+  <text x="596" y="235.4" textLength="76.8" fill="#8b949e">m models</text>
+  <text x="701.6" y="235.4" textLength="153.6" fill="#8b949e">Tab subscription</text>
+  <text x="884" y="235.4" textLength="124.8" fill="#8b949e">←/→ fold/open</text>
+  <text x="1037.6" y="235.4" textLength="57.6" fill="#8b949e">? keys</text>
+  <text x="1124" y="235.4" textLength="57.6" fill="#8b949e">q quit</text>
   </g>
 </g>
 </svg>

@@ -29,6 +29,7 @@ func withPipeStdin(t *testing.T, data string, fn func()) {
 func TestReadKeyVariants(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"\n", "enter"},
+		{"\t", "tab"},
 		{"k", "k"},
 		{"\x1b[A", "up"},
 		{"\x1b[B", "down"},
@@ -48,7 +49,7 @@ func TestReadKeyVariants(t *testing.T) {
 	}
 	for _, tt := range tests {
 		withPipeStdin(t, tt.in, func() {
-			got, err := readKey()
+			got, err := readKeyFrom(keyBytes())
 			if err != nil || got != tt.want {
 				t.Fatalf("readKey(%q)=%q err=%v want=%q", tt.in, got, err, tt.want)
 			}
@@ -80,7 +81,7 @@ func TestReadKeyReturnsOnASingleEsc(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		key, err := readKey()
+		key, err := readKeyFrom(keyBytes())
 		done <- result{key, err}
 	}()
 	select {
@@ -98,20 +99,19 @@ func TestDashboardNonTerminalAndEmptyAccountErrors(t *testing.T) {
 	if err := runDashboard(p); err == nil || !strings.Contains(err.Error(), "no accounts") {
 		t.Fatalf("expected no-account error, got %v", err)
 	}
-	if _, err := pickAccount(p, nil); err == nil {
+	if _, err := pickAccount(p, nil, ""); err == nil {
 		t.Fatal("expected empty picker error")
 	}
 
-	accounts := []Account{{ID: "a", Name: "primary"}}
-	results := []UsageResult{{Account: accounts[0], Usage: WeeklyUsage{UsedPercent: 20, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}}}
+	installTestAgy(t)
+	writeTestAccount(t, p, Account{ID: agyDefaultID, Name: "primary", Subscription: agyPro})
 	withPipeStdin(t, "", func() {
 		out := captureStdout(t, func() {
-			sel, action, err := dashboardLoop(p, accounts, results, 0)
-			if err != nil || sel != 0 || action != "quit" {
-				t.Fatalf("sel=%d action=%q err=%v", sel, action, err)
+			if err := runDashboard(p); err != nil {
+				t.Fatal(err)
 			}
 		})
-		if !strings.Contains(out, "cx status") {
+		if !strings.Contains(out, "cx status") || !strings.Contains(out, "Gemini Models") {
 			t.Fatalf("output=%q", out)
 		}
 	})
@@ -119,13 +119,13 @@ func TestDashboardNonTerminalAndEmptyAccountErrors(t *testing.T) {
 
 func TestDrawDashboard(t *testing.T) {
 	p := makeTestPaths(t)
-	if err := saveState(p, State{ActiveID: "a"}); err != nil {
+	if err := saveState(p, State{CodexAccountID: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	r := UsageResult{Account: Account{ID: "a", Name: "primary", Plan: "plus"}, Usage: WeeklyUsage{UsedPercent: 5, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}, Primed: true}
-	out := captureStdout(t, func() { drawDashboard(p, []Account{r.Account}, []UsageResult{r}, 0) })
-	for _, want := range []string{"cx", "primary", "quota windows started just now", "enter switch"} {
-		if !strings.Contains(out, want) {
+	r := UsageResult{Account: Account{ID: "a", Name: "primary", Email: "user@example.com", Subscription: codexPlus}, Usage: WeeklyUsage{UsedPercent: 5, ResetsAt: time.Now().Add(time.Hour).Unix(), WindowStarted: true}, Primed: true}
+	out := captureStdout(t, func() { drawDashboardFrame(newDashboardView(p, []Account{r.Account}, []UsageResult{r}, 0)) })
+	for _, want := range []string{"cx", "user@example.com", "quota windows started just now", "enter switch"} {
+		if !strings.Contains(plain(out), want) {
 			t.Fatalf("dashboard missing %q: %q", want, out)
 		}
 	}

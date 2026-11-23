@@ -98,7 +98,7 @@ while :; do sleep 1; done
 	if err := os.MkdirAll(p.accountDir(a.ID), 0700); err != nil {
 		t.Fatal(err)
 	}
-	u, err := fetchUsage(p, a)
+	_, u, err := fetchUsagePair(p, &a)
 	if err != nil {
 		t.Fatal(err)
 	}

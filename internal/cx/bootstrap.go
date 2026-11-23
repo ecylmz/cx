@@ -1,6 +1,7 @@
 package cx
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ const (
 // cx init and is a no-op when cx already manages accounts or when the system
 // has no ChatGPT login: cx never invents an account in that case, the user adds
 // their first one under any name with cx add.
-func bootstrapPrimaryAccount(p paths) (Account, bootstrapStatus, error) {
+func bootstrapPrimaryAccount(p paths, sub subscription) (Account, bootstrapStatus, error) {
 	accounts, err := listAccounts(p)
 	if err != nil {
 		return Account{}, bootstrapNoLogin, err
@@ -56,12 +57,15 @@ func bootstrapPrimaryAccount(p paths) (Account, bootstrapStatus, error) {
 		// the normal first-switch backup path will preserve it unchanged.
 		return Account{}, bootstrapNoLogin, nil
 	}
+	if err := verifySubscription(sub, ident.Tier); err != nil {
+		return Account{}, bootstrapNoLogin, err
+	}
 
 	id, err := newID()
 	if err != nil {
 		return Account{}, bootstrapNoLogin, err
 	}
-	if err := os.MkdirAll(p.accountDir(id), 0700); err != nil {
+	if err := os.MkdirAll(p.accountDir(id), 0o700); err != nil {
 		return Account{}, bootstrapNoLogin, err
 	}
 	cleanup := true
@@ -79,13 +83,13 @@ func bootstrapPrimaryAccount(p paths) (Account, bootstrapStatus, error) {
 
 	now := time.Now()
 	a := Account{
-		ID:        id,
-		Name:      primaryAccountName,
-		AccountID: ident.AccountID,
-		Email:     ident.Email,
-		Plan:      ident.Plan,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           id,
+		Name:         primaryAccountName,
+		AccountID:    ident.AccountID,
+		Email:        ident.Email,
+		Subscription: cmp.Or(sub, codexPlus),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := writeJSON(p.accountMeta(id), a); err != nil {
 		return Account{}, bootstrapNoLogin, err

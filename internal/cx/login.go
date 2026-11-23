@@ -1,6 +1,7 @@
 package cx
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +16,7 @@ func runDeviceAuth(home string) error {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return errors.New("codex executable not found in PATH")
 	}
-	if err := os.MkdirAll(home, 0700); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
 	if err := ensureFileStoreConfig(filepath.Join(home, "config.toml"), false); err != nil {
@@ -41,7 +42,7 @@ func verifyExpectedEmail(ident authIdentity, expectedEmail string) error {
 	return nil
 }
 
-func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
+func addAccount(p paths, requestedName, expectedEmail string, sub subscription) (Account, error) {
 	if requestedName != "" {
 		if err := validateName(requestedName); err != nil {
 			return Account{}, err
@@ -67,6 +68,9 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 		return Account{}, err
 	}
 	if err := verifyExpectedEmail(ident, expectedEmail); err != nil {
+		return Account{}, err
+	}
+	if err := verifySubscription(sub, ident.Tier); err != nil {
 		return Account{}, err
 	}
 
@@ -104,7 +108,7 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 	}
 
 	finalDir := p.accountDir(id)
-	if err := os.MkdirAll(finalDir, 0700); err != nil {
+	if err := os.MkdirAll(finalDir, 0o700); err != nil {
 		return Account{}, err
 	}
 	if err := ensureFileStoreConfig(filepath.Join(finalDir, "config.toml"), false); err != nil {
@@ -114,13 +118,13 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 		return Account{}, err
 	}
 	now := time.Now()
-	a := Account{ID: id, Name: name, AccountID: ident.AccountID, Email: ident.Email, Plan: ident.Plan, CreatedAt: now, UpdatedAt: now}
+	a := Account{ID: id, Name: name, AccountID: ident.AccountID, Email: ident.Email, Subscription: cmp.Or(sub, codexPlus), CreatedAt: now, UpdatedAt: now}
 	if err := writeJSON(p.accountMeta(id), a); err != nil {
 		return Account{}, err
 	}
 
 	st, _ := loadState(p)
-	if st.ActiveID == "" {
+	if st.CodexAccountID == "" {
 		if err := switchAccount(p, a); err != nil {
 			return Account{}, err
 		}
@@ -129,7 +133,8 @@ func addAccount(p paths, requestedName, expectedEmail string) (Account, error) {
 }
 
 func reloginAccount(p paths, selector, expectedEmail string) (Account, error) {
-	a, err := findAccount(p, selector)
+	which := providerCodex
+	a, err := findAccount(p, selector, &which)
 	if err != nil {
 		return Account{}, err
 	}
@@ -159,7 +164,7 @@ func reloginAccount(p paths, selector, expectedEmail string) (Account, error) {
 	if err := installAuth(filepath.Join(stage, "auth.json"), p.accountAuth(a.ID)); err != nil {
 		return Account{}, err
 	}
-	a.Email, a.Plan, a.UpdatedAt = ident.Email, ident.Plan, time.Now()
+	a.Email, a.UpdatedAt = ident.Email, time.Now()
 	if err := writeJSON(p.accountMeta(a.ID), a); err != nil {
 		return Account{}, err
 	}

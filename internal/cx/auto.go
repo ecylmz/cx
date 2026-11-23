@@ -41,7 +41,7 @@ func handleAuto(p paths) error {
 		if i == active {
 			continue
 		}
-		if a.Provider == accounts[active].Provider {
+		if a.subscription() == accounts[active].subscription() {
 			same = append(same, a)
 		} else {
 			other = append(other, a)
@@ -61,8 +61,8 @@ func handleAuto(p paths) error {
 	}
 
 	fmt.Printf("%s switched to %s", green("✓"), account.Name)
-	if account.Provider != accounts[active].Provider {
-		fmt.Printf(" [%s]", account.Provider.label())
+	if account.subscription() != accounts[active].subscription() {
+		fmt.Printf(" [%s]", account.subscription().label())
 	}
 	if account.Email != "" {
 		fmt.Printf(" (%s)", account.Email)
@@ -72,7 +72,7 @@ func handleAuto(p paths) error {
 }
 
 func fetchAccountQuota(p paths, account Account) UsageResult {
-	switch account.Provider {
+	switch account.provider() {
 	case providerAgy:
 		return fetchAgyUsage(p, account)
 	case providerCodex:
@@ -83,7 +83,7 @@ func fetchAccountQuota(p paths, account Account) UsageResult {
 		}
 		return result
 	default:
-		return UsageResult{Account: account, Err: fmt.Sprintf("unknown provider %q", account.Provider)}
+		return UsageResult{Account: account, Err: fmt.Sprintf("unknown provider %q", account.provider())}
 	}
 }
 

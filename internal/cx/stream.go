@@ -42,7 +42,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 			rs := fetchAllUsage(p, []Account{a})
 			<-usageSem
 			r := rs[0]
-			if a.Provider != providerCodex {
+			if a.provider() != providerCodex {
 				updates <- usageUpdate{Index: i, Result: r, Final: true}
 				return
 			}
@@ -79,26 +79,7 @@ func fetchUsageUpdatesWithPriming(p paths, accounts []Account) <-chan usageUpdat
 				return
 			}
 
-			weekly.WindowStarted = true
-			if fiveHour != nil {
-				fiveHour.WindowStarted = true
-			}
-			r.Usage = weekly
-			r.FiveHour = fiveHour
-			r.Primed = true
-
-			account := r.Account
-			if weekly.ResetsAt > 0 {
-				if updated, rememberErr := rememberWeeklyReset(p, account, weekly.ResetsAt); rememberErr == nil {
-					account = updated
-				}
-			}
-			if fiveHour != nil && fiveHour.ResetsAt > 0 {
-				if updated, rememberErr := rememberFiveHourReset(p, account, fiveHour.ResetsAt); rememberErr == nil {
-					account = updated
-				}
-			}
-			r.Account = account
+			markQuotaPrimed(p, &r, fiveHour, weekly)
 			updates <- usageUpdate{Index: i, Result: r, Final: true}
 		}()
 	}

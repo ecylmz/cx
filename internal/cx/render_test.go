@@ -1,6 +1,7 @@
 package cx
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func TestLocaleAndResetFormatting(t *testing.T) {
 	if !strings.Contains(got, " · in 2h 05m") {
 		t.Fatalf("reset=%q", got)
 	}
-	if resetText(0, now) != "unknown" || exactResetText(0) != "unknown" {
+	if resetText(0, now) != "unknown" {
 		t.Fatal("unknown reset")
 	}
 	past := now.Add(-time.Minute).Unix()
@@ -124,24 +125,18 @@ func TestLocaleAndResetFormatting(t *testing.T) {
 
 func TestUsageLinePrintStatusAndJSON(t *testing.T) {
 	p := makeTestPaths(t)
-	if err := saveState(p, State{ActiveID: "a"}); err != nil {
+	if err := saveState(p, State{CodexAccountID: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	u := WeeklyUsage{UsedPercent: 25, WindowMinutes: 10080, ResetsAt: now.Add(3 * time.Hour).Unix(), FetchedAt: now, Fresh: true, WindowStarted: true}
-	line := usageLine(u)
-	if !strings.Contains(line, "75.0% left") || !strings.Contains(line, "resets") {
-		t.Fatalf("usage=%q", line)
-	}
-	accounts := []Account{{ID: "a", Name: "primary", Plan: "plus", Email: "a@example.com"}, {ID: "b", Name: "backup"}}
+	accounts := []Account{{ID: "a", Name: "primary", Subscription: codexPlus, Email: "a@example.com"}, {ID: "b", Name: "backup"}}
 	results := []UsageResult{{Account: accounts[0], Usage: u}, {Account: accounts[1], Usage: WeeklyUsage{FetchedAt: now, WindowStarted: true}, Err: "offline"}}
 	out := captureStdout(t, func() { printStatus(p, results) })
-	// The usage line is rendered unindented and each caller adds its own
-	// indentation, so pin the one cx status uses.
 	if !strings.Contains(out, "\n  weekly  ") {
 		t.Fatalf("status usage line lost its indentation:\n%s", out)
 	}
-	for _, want := range []string{"cx status", "primary", "75.0% left", "stale", "offline"} {
+	for _, want := range []string{"cx status", "primary", "75.0% left", "resets", "stale", "offline"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}
@@ -158,7 +153,7 @@ func TestUsageLinePrintStatusAndJSON(t *testing.T) {
 
 func TestExhaustedWindowStartStaysOneQuietLine(t *testing.T) {
 	p := makeTestPaths(t)
-	a := Account{ID: "a", Name: "backup", AccountID: "acct"}
+	a := Account{ID: "a", Name: "backup", Email: "backup@example.com", AccountID: "acct"}
 	writeTestAccount(t, p, a)
 	_, skipped := classifyPrimeFailure(errQuotaExhausted)
 	r := UsageResult{
@@ -181,12 +176,19 @@ func TestExhaustedWindowStartStaysOneQuietLine(t *testing.T) {
 		t.Fatalf("want exactly one skip note, got %d:\n%s", notes, out)
 	}
 
+	r.Usage.UsedPercent, r.Usage.WindowStarted = 100, true
+	r.FiveHour = &WeeklyUsage{WindowMinutes: 300, ResetsAt: r.Usage.FetchedAt.Add(5 * time.Hour).Unix(), FetchedAt: r.Usage.FetchedAt}
 	frame, _ := renderDashboardFrame(newDashboardView(p, []Account{a}, []UsageResult{r}, 0))
 	if strings.Contains(frame, "window start failed") {
 		t.Fatalf("dashboard reported a failure:\n%s", frame)
 	}
-	if !strings.Contains(frame, "window not started") {
-		t.Fatalf("dashboard dropped the skip note:\n%s", frame)
+	if strings.Contains(frame, "usage limit reached") {
+		t.Fatalf("dashboard repeats the skip note:\n%s", frame)
+	}
+	if !slices.ContainsFunc(strings.Split(frame, "\n"), func(line string) bool {
+		return strings.Contains(plain(line), a.Email) && strings.Contains(line, "Starts after reset") && strings.Contains(line, "0%")
+	}) {
+		t.Fatalf("dashboard should report the status in the quota cell:\n%s", frame)
 	}
 }
 

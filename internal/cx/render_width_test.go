@@ -40,40 +40,16 @@ func TestFitCellsCutsByCellAndClosesTheStyle(t *testing.T) {
 	}
 }
 
-func TestBarWidthShrinksWithTheTerminal(t *testing.T) {
-	if got := barWidthFor(0); got != defaultBarCells {
-		t.Fatalf("unknown width should keep the full meter: %d", got)
-	}
-	if got := barWidthFor(200); got != defaultBarCells {
-		t.Fatalf("a wide terminal should cap the meter: %d", got)
-	}
-	if got := barWidthFor(48); got != 16 {
-		t.Fatalf("barWidthFor(48)=%d want 16", got)
-	}
-	if got := barWidthFor(12); got != 8 {
-		t.Fatalf("the meter should stay readable at its floor: %d", got)
-	}
-}
-
-// Truncating the full reset text cut away the relative time, which is the half
-// that answers when the quota comes back.
-func TestNarrowUsageLinesKeepTheRelativeResetTime(t *testing.T) {
+func TestNarrowDashboardKeepsTheRelativeResetTime(t *testing.T) {
 	old := useColor
 	useColor = false
 	defer func() { useColor = old }()
 
-	now := time.Now()
-	r := UsageResult{Usage: WeeklyUsage{UsedPercent: 25, WindowMinutes: 10080, ResetsAt: now.Add(3 * time.Hour).Unix(), FetchedAt: now, WindowStarted: true}}
-	wide := usageLinesWidth(r, 120)[0]
-	narrow := usageLinesWidth(r, 50)[0]
-	if !strings.Contains(wide, "resets") || !strings.Contains(wide, "in 2h") {
-		t.Fatalf("wide line=%q", wide)
-	}
-	if !strings.Contains(narrow, "in 2h") {
-		t.Fatalf("narrow line dropped the relative time: %q", narrow)
-	}
-	if len([]rune(narrow)) >= len([]rune(wide)) {
-		t.Fatalf("narrow line is not shorter: %q vs %q", narrow, wide)
+	v := layoutTestView(t, 1, 0, termSize{cols: 76})
+	v.results[0].Usage.ResetsAt = time.Now().Add(2*time.Hour + 30*time.Minute).Unix()
+	frame, _ := renderDashboardFrame(v)
+	if !strings.Contains(frame, "90%  ↻  in 2h") {
+		t.Fatalf("narrow dashboard should keep the countdown in the weekly column:\n%s", frame)
 	}
 }
 
